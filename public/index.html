@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Speed and current</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+<section class="svg-section">
+  <object data="vectors.html" width="100%" height="500px" type="text/html"></object>
+</section>
+
+    <section class="controls-section">
+<div>
+  <!-- Speed Unit Selection -->
+  <label for="speed-unit">Select Speed Unit:</label>
+  <select id="speed-unit" name="speed-unit" onchange="handleSpeedUnitChange(this.value)">
+    <option value="ms">m/s</option>
+    <option value="knots">knots</option>
+    <option value="kmh">km/h</option>
+  </select>
+
+  <!-- Angle Unit Selection -->
+  <label for="angle-unit">Select Angle Unit:</label>
+  <select id="angle-unit" name="angle-unit" onchange="handleAngleUnitChange(this.value)">
+    <option value="radians">radians</option>
+    <option value="degrees">degrees</option>
+  </select>
+      <div>
+        <label for="update-interval">Update Interval (ms):</label>
+        <input type="number" id="update-interval" value="1000" min="500">
+        <button id="toggle-updates">Pause Updates</button>
+        <p>Timestamp: <span id="timestamp">N/A</span></p>
+      </div>
+
+</div>
+</section>
+ 
+
+  <section class="delta-section">
+    <h2>Deltas</h2>
+    <div id="delta-container">
+      <!-- Speeds table will be populated here -->
+    </div>
+  </section>
+
+  <section class="speeds-section">
+    <h2>Boat speed</h2>
+    <div id="speeds-container">
+      <!-- Speeds table will be populated here -->
+    </div>
+  </section>
+
+  <section class="attitude-section">
+    <h2>Attitude</h2>
+    <div id="attitude-container">
+      <!-- attitude table will be populated here -->
+    </div>
+  </section>
+
+  <section class="polar-section">
+    <h2>Calculations</h2>
+    <div id="steps-list">
+      <!-- Steps table will be populated here -->
+    </div>
+  </section>
+
+    <section class="table-section">
+      <h2>Correction table</h2>
+      <div id="table-container">
+        <!-- Steps table will be populated here -->
+      </div>
+    </section>
+
+
+
+  <section class="options-section">
+    <h2>Plugin options</h2>
+    <div id="options-content">
+      <!-- Options table will be populated here -->
+    </div>
+  </section>
+
+
+
+
+
+  <script src="app.js"></script>
+</body>
+
+</html>

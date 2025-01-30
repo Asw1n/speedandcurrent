@@ -1,0 +1,34 @@
+{
+  "name": "speedandcurrent",
+  "version": "1.0.0",
+  "description": "An experimental plugin that uses sensor fusion to get boat speed, current and leeway.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "aswin.bouwmeester@gmail.com",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Asw1n/speedandcurrent.git",
+    "directory": "./CHANGELOG.md"
+  },
+  "bugs": {
+    "url": "https://github.com/Asw1n/speedandcurrent/issues"
+  },
+  "homepage": "https://github.com/Asw1n/speedandcurrent#readme",
+  "keywords": [
+    "signalk-webapp",
+    "signalk-node-server-plugin",
+    "signalk-category-utility"
+  ],
+  "signalk-plugin-enabled-by-default": false,
+  "signalk": {
+    "appIcon": "./icon.png",
+    "displayName": "Speed and current"
+  },
+  "dependencies": {
+    "kalman-filter": "^2.3.0",
+    "ml-matrix": "^6.12.0"
+  }
+}
