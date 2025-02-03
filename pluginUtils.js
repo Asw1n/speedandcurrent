@@ -15,7 +15,6 @@ class Delta {
 
   setValue(value) {
     this.value = value;
-    this.timestamp = timestamp;
   }
 
   getValue() {
@@ -66,10 +65,11 @@ class Delta {
         },
         delta => {
           delta.updates.forEach(u => {
-            //this.app.debug(u.source?.label);
-            //this.app.debug(this.pluginId);
+            this.app.debug(u.source?.label);
+            this.app.debug(this.pluginId);
             if (u.source?.label !== this.pluginId) {
               u.values.forEach(v => {
+                this.app.debug(v);
                 this.value = v.value;
                 this.timestamp = new Date(u.timestamp);
                 if (typeof this.onChange === 'function')

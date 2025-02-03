@@ -82,7 +82,7 @@ module.exports = function (app) {
   let options = {};
   let isRunning = false;
   let corrTable = null;
-  var heading, attitude,  boatSpeed, correctedBoatSpeed, groundSpeed, current, deltaV, reporter;
+  var heading, attitude,  boatSpeed, correctedBoatSpeed, groundSpeed, current, deltaV, reporter, lastSave;
 
 
   const plugin = {};
@@ -92,6 +92,12 @@ module.exports = function (app) {
   plugin.schema = {
     type: "object",
     properties: {
+      doStartFresh: {
+        type: "boolean",
+        title: "Empty correction table",
+        description: "Restart with a fresh correction table. WARNING: all current corrections will be lost permanently!",
+        default: false
+      },
       heelStep: {
         type: "number",
         title: "Step size for heel",
@@ -168,10 +174,6 @@ module.exports = function (app) {
     }
   };
 
-
-
-
-
   plugin.registerWithRouter = function (router) {
     app.debug('registerWithRouter');
 
@@ -214,27 +216,39 @@ module.exports = function (app) {
 
   }
 
+  function saveTable(options, correctionTable) {
+    options.correctionTable = correctionTable.toJSON();
+    app.savePluginOptions(options, () => { app.debug('Correction table saved') });
+    return new Date();
+  }
+
 
   plugin.start = (opts) => {
     app.debug("plugin started");
     options = opts;
-    if (enforceConsistancy() ) {
+    if (enforceConsistancy() && !options.doStartFresh) {
       corrTable = CorrectionTable.fromJSON(options.correctionTable, 10 ** options.correctionStability);
       app.debug("Correction table loaded");
+      lastSave = new Date();
     }
     else {
       corrTable = new CorrectionTable(SI.fromDegrees(options.heelStep), SI.fromKnots(options.speedStep), SI.fromDegrees(options.maxHeel), SI.fromKnots(options.maxSpeed), 10 ** options.correctionStability);
       app.debug("Correction table created");
+      options.doStartFresh = false;
+      lastSave = saveTable(options, corrTable);
     }
 
-    heading = new Delta(app, plugin.id, "navigation.headingTrue");
+
+    // TBD: headingTrue or headingMagnetic
+    heading = new Delta(app, plugin.id, "navigation.headingMagnetic");
     attitude = new Delta(app, plugin.id, "navigation.attitude");
+    currentDelta = new Delta(app, plugin.id, "environment.current");
     attitude.value = { pitch: 0, roll: 0, yaw: 0 }; //prevents errors when there is no attitude sensor
     //apparentWind = new PolarDelta(app, plugin.id, "environment.wind.speedApparent", "environment.wind.angleApparent");
     boatSpeed = new PolarDelta(app, plugin.id, "navigation.speedThroughWater", "environment.wind.directionTruenavigation.leewayAngle");
     correctedBoatSpeed = new PolarDelta(app, plugin.id, "navigation.speedThroughWater", "environment.wind.directionTruenavigation.leewayAngle");
     groundSpeed = new PolarDelta(app, plugin.id, "navigation.speedOverGround", "navigation.courseOverGroundTrue");
-    current = new PolarDelta(app, plugin.id);
+    current = new PolarDelta(app, plugin.id, );
     deltaV = new PolarDelta(app, plugin.id);
 
 
@@ -277,7 +291,6 @@ module.exports = function (app) {
     isRunning = true;
 
 
-
     function calculate(timestamp) {
       // prepare iteration
       correctedBoatSpeed.copyFrom(boatSpeed);
@@ -285,8 +298,8 @@ module.exports = function (app) {
       speed = boatSpeed.speed.value;
       boatAngle = heading.value;
       reporter.newReport(timestamp, options);
-      reporter.addPolar("boat speed", boatSpeed);
       reporter.addPolar("ground speed", groundSpeed);
+      reporter.addPolar("boat speed", boatSpeed);
       reporter.addAttitude("Attitude", attitude);
       reporter.addDelta("heading", heading);
 
@@ -301,6 +314,7 @@ module.exports = function (app) {
       cor = corrTable.getKalmanCorrection(heel, speed);
       deltaV.setVectorValue(cor);
       deltaV.rotate(Math.PI);
+      reporter.addPolar("correction", deltaV);
       correctedBoatSpeed.add(deltaV);
       reporter.addPolar("corrected boat speed", correctedBoatSpeed);
       if (!options.noCurrent && cor.totalWeight > 0) {
@@ -315,7 +329,20 @@ module.exports = function (app) {
         v.y = previousCorrected.mean[1][0];
         current.setVectorValue(v);
       }
+      if (options.doCurrent) {
+        const c = current.getValue();
+        const cc= {drift: current.speed, setTrue: current.angle, setMagnetic: null};
+        currentDelta.setValue(cc);
+        currentDelta.sendDelta();
+      }
+
+      if (options.doCorrect) correctedBoatSpeed.sendDelta();
+
       reporter.addPolar("current", current);
+      if (new Date() - lastSave > 5 * 60 * 1000) {
+        lastSave = saveTable(options, corrTable);
+      }
+
     }
 
     function enforceConsistancy() {
@@ -346,8 +373,7 @@ module.exports = function (app) {
     unsubscribes = [];
     //corrTable.save(app);
     if (corrTable != null) {
-      options.correctionTable = corrTable.toJSON();
-      app.savePluginOptions(options, () => { app.debug('Correction table saved') });
+      lastSave = saveTable(options, corrTable);
     }
     options = {};
     heading = null;

@@ -26,7 +26,6 @@ class Correction {
     }
     if (Correction.minTrace == null) {
       Correction.calculateMinTrace(stability);
-      console.log(Correction.minTrace);
     }
   }
 
@@ -104,9 +103,13 @@ class Correction {
     return covariance[0][0] + covariance[1][1];
   }
 
+  get covariance() {
+    return this.filterState.covariance;
+  }
+
 
   toJSON() {
-    return this.filterState ? { state: this.filterState } : { state: null };
+    return this.N != 0 ? { state: this.filterState } : { state: null };
   }
 
   static fromJSON(data, stability) {
@@ -266,9 +269,6 @@ class CorrectionTable {
     };
   }
 
-  save(server) {
-    server.savePluginConfig("speed_correction_table", this.toJSON());
-  }
 
   static fromJSON(data, stability ) {
     const instance = new CorrectionTable(); // Replace `YourClass` with the actual class name

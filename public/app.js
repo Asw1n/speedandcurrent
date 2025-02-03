@@ -10,6 +10,19 @@ let vSpeed = 1;
 let dSpeed = 1;
 
 
+
+// function toggleUpdates() {
+//   let button = document.getElementById("toggle-updates");
+//   if (button.innerText === "Pause") {
+//     button.innerText = "Resume";
+//   } else {
+//     button.innerText = "Pause";
+//   }
+// }
+
+
+
+
 function handleSpeedUnitChange(value) {
   if (value == "knots") {
     vSpeed = 1.943844;
@@ -57,20 +70,26 @@ async function getFromServer(endpoint) {
     });
 
     if (!response.ok) {
-      throw new Error(`Error fetching data: ${response.statusText}`);
+      if (response.status === 503) {
+        document.getElementById("message").innerHTML = "Plugin is not running";
+      } else {
+        document.getElementById("message").innerHTML = "Failed to fetch data";
+      }
+    }
+    else {
+      document.getElementById("message").innerHTML = "";
     }
 
     const data = await response.json();
     return data;
   } catch (error) {
     console.error("Failed to fetch data from server:", error);
+    document.getElementById("message").innerHTML = error;
     return null;
   }
 }
 
-function updateMetadata(data) {
-  document.getElementById('timestamp').textContent = data.timestamp;
-}
+
 
 function updateOptions(data) {
   const optionsContent = document.getElementById('options-content');
@@ -199,7 +218,6 @@ function updateTable(data) {
                     <div><strong>X:</strong> ${cSpeed(correction.x)}</div>
                     <div><strong>Y:</strong> ${cSpeed(correction.y)}</div>
                     <div><strong>N:</strong> ${correction.N}</div>
-                    <div><strong>trace:</strong> ${correction.trace.toFixed(2)}</div>
                 `;
       }
       else {
@@ -222,7 +240,6 @@ async function fetchAndUpdateData() {
   const data = await getFromServer('getResults'); // Updated endpoint
   if (data) {
     //console.log(data);
-    updateMetadata(data);
     updateOptions(data);
     updateSpeed(data);
     updateAttitude(data);
@@ -242,20 +259,18 @@ function toggleUpdates() {
 
   if (updatesPaused) {
     clearInterval(updateTimer);
-    toggleButton.textContent = "Resume Updates";
+    toggleButton.textContent = "Resume";
   } else {
-    toggleButton.textContent = "Pause Updates";
+    toggleButton.textContent = "Pause";
     startUpdates();
   }
 }
 
-document.getElementById('update-interval').addEventListener('input', (event) => {
-  updateInterval = parseInt(event.target.value, 10) || 1000;
-  if (!updatesPaused) startUpdates();
-});
 
-document.getElementById('toggle-updates').addEventListener('click', toggleUpdates);
+//document.getElementById('toggle-updates').addEventListener('click', toggleUpdates);
 
+handleSpeedUnitChange("knots");
+handleAngleUnitChange("degrees");
 
 // Initial fetch and start updates
 startUpdates();

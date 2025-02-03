@@ -9,36 +9,46 @@
 </head>
 
 <body>
+
+  <header class="menu-bar">
+    <!-- Speed Unit Selection -->
+    <div class="menu-item dropdown">
+      <label for="speed-unit">Speed:</label>
+      <select id="speed-unit" onchange="handleSpeedUnitChange(this.value)">
+        <option value="ms">m/s</option>
+        <option value="knots" selected>knots</option>
+        <option value="kmh">km/h</option>
+      </select>
+    </div>
+  
+    <!-- Angle Unit Selection -->
+    <div class="menu-item dropdown">
+      <label for="angle-unit">Angle:</label>
+      <select id="angle-unit" onchange="handleAngleUnitChange(this.value)">
+        <option value="radians">radians</option>
+        <option value="degrees" selected>degrees</option>
+      </select>
+    </div>
+  
+  
+    <!-- Pause Button -->
+    <button id="toggle-updates" class="menu-item" onclick="toggleUpdates()">Pause</button>
+  
+    <!-- messages -->
+
+        <div id="message">
+          hoi
+        </div>
+
+  </header>
+  
+  <!-- Content below the fixed menu -->
+  <main class="content">
+    
 <section class="svg-section">
   <object data="vectors.html" width="100%" height="500px" type="text/html"></object>
 </section>
 
-    <section class="controls-section">
-<div>
-  <!-- Speed Unit Selection -->
-  <label for="speed-unit">Select Speed Unit:</label>
-  <select id="speed-unit" name="speed-unit" onchange="handleSpeedUnitChange(this.value)">
-    <option value="ms">m/s</option>
-    <option value="knots">knots</option>
-    <option value="kmh">km/h</option>
-  </select>
-
-  <!-- Angle Unit Selection -->
-  <label for="angle-unit">Select Angle Unit:</label>
-  <select id="angle-unit" name="angle-unit" onchange="handleAngleUnitChange(this.value)">
-    <option value="radians">radians</option>
-    <option value="degrees">degrees</option>
-  </select>
-      <div>
-        <label for="update-interval">Update Interval (ms):</label>
-        <input type="number" id="update-interval" value="1000" min="500">
-        <button id="toggle-updates">Pause Updates</button>
-        <p>Timestamp: <span id="timestamp">N/A</span></p>
-      </div>
-
-</div>
-</section>
- 
 
   <section class="delta-section">
     <h2>Deltas</h2>
@@ -48,7 +58,7 @@
   </section>
 
   <section class="speeds-section">
-    <h2>Boat speed</h2>
+    <h2>Vectors</h2>
     <div id="speeds-container">
       <!-- Speeds table will be populated here -->
     </div>
@@ -61,12 +71,6 @@
     </div>
   </section>
 
-  <section class="polar-section">
-    <h2>Calculations</h2>
-    <div id="steps-list">
-      <!-- Steps table will be populated here -->
-    </div>
-  </section>
 
     <section class="table-section">
       <h2>Correction table</h2>
@@ -83,6 +87,8 @@
       <!-- Options table will be populated here -->
     </div>
   </section>
+    </main>
+
 
 
 

@@ -4,13 +4,13 @@
 This SignalK plugin estimates **a corrected speed through water**, **leeway**, and **water current** in real-time using advanced filter techniques. The plugin continuously refines its estimates based on vessel speed, heading, ground speed, and heel angle.
 
 ### **Key Features**  
-✅ Real-time correction of vessel speed.  
-✅ Real time estimation of leeway.
-✅ Real time estimation of water current (both speed and direction).
-✅ Adaptive learning: The plugin refines corrections over time.
-✅ A webApp to give both real time insight in the working of the plugin.
-✅ Use of Kalman filters to give optimal estimations of paddle.
-✅ A user configurable 2D correction table for speed errors based on heel and speed.  
+- ✅ Real-time correction of vessel speed.  
+- ✅ Real time estimation of leeway.
+- ✅ Real time estimation of water current (both speed and direction).
+- ✅ Adaptive learning: The plugin refines corrections over time.
+- ✅ A webApp to give both real time insight in the working of the plugin.
+- ✅ Use of Kalman filters to give optimal estimations of paddle.
+- ✅ A user configurable 2D correction table for speed errors based on heel and speed.  
   
 ## **Introduction** 
 The plugin is based on the idea that a vessels speed sensor is imperfect and could be corrected. A speed sensor, most often a paddle wheel, is imperfect for two reasons. First, its measurement is not precise. The way that water flows over the hull influences the measurement of the paddle wheel. Second, a paddle wheel does not meaure lateral speed or leeway. Leeway is an important factor for sailing vessels as the wind not only pushes the vessel forward but it also pushes the vessel sideways to lee.
@@ -70,6 +70,10 @@ The graphical representation of the speed veectors, current vector and correctio
 
 ### **3. Mathematical Model** 
 The system is based on the equation:
+![Equation](CodeCogsEqn.svg)
+
+---
+
 
 \[
 \mathbb{R}(-\theta_{n} ) \cdot  {\vec{correction}} + {\vec{current}} =  \mathbb{R}(\theta_{n} ) \cdot ({\vec{STW}_{n}}) - {\vec{VOG}_{n}}  
