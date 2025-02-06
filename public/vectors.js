@@ -47,21 +47,21 @@ function drawBoat(canvas, data, heading, offset, att) {
   hull.setAttribute("fill", "none");
   hull.setAttribute("stroke", "black");
   hull.setAttribute("stroke-width", "1");
-  hull.setAttribute("transform", `scale(${1 - Math.abs(Math.sin(att.pitch))}, ${1 - Math.abs(Math.sin(att.roll))})`);
+  //hull.setAttribute("transform", `scale(${1 - Math.abs(Math.sin(att.pitch))}, ${1 - Math.abs(Math.sin(att.roll))})`);
   hull.setAttribute("id", "hull");
 
-  const mast = document.createElementNS("http://www.w3.org/2000/svg", "line");
-  mast.setAttribute("x1", 0);
-  mast.setAttribute("y1", 0);
-  mast.setAttribute("x2", offset.x);
-  mast.setAttribute("y2", offset.y);
-  mast.setAttribute("id", "mast");
+  // const mast = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  // mast.setAttribute("x1", 0);
+  // mast.setAttribute("y1", 0);
+  // mast.setAttribute("x2", offset.x);
+  // mast.setAttribute("y2", offset.y);
+  // mast.setAttribute("id", "mast");
 
 
   const boat = document.createElementNS("http://www.w3.org/2000/svg", "g");
   boat.setAttribute("transform", `rotate(${heading - 90})`);
   boat.appendChild(hull);
-  boat.appendChild(mast);
+  // boat.appendChild(mast);
   canvas.appendChild(boat);
 }
 

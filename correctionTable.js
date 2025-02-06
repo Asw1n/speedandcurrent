@@ -7,11 +7,11 @@ class Correction {
 
   static minTrace = null;
 
-  constructor(stability=100000, initialState) {
+  constructor(stability = 100000, initialState) {
     const filterModel = {
       observation: {
         stateProjection: [[1, 0], [0, 1]], // observation matrix H
-        covariance: [[ stability, 0], [0, stability]], //measurement noise R
+        covariance: [[stability, 0], [0, stability]], //measurement noise R
         dimension: 2
       },
       dynamic: {
@@ -33,7 +33,7 @@ class Correction {
     const cFilter = new KalmanFilter({
       observation: {
         stateProjection: [[1, 0], [0, 1]], // observation matrix H
-        covariance: [[stability, 0], [0, stability ]], //measurement noise R
+        covariance: [[stability, 0], [0, stability]], //measurement noise R
         dimension: 2
       },
       dynamic: {
@@ -41,45 +41,70 @@ class Correction {
         covariance: [1, 1],// process noise covariance matrix Q
       }
     });
-    
+
     let trace = 0;
     let N = 10000;
-    let previousCorrected =null;
-    let observation =[0,0];
-    for ( let x=0; x<N; x++) {
+    let previousCorrected = null;
+    let observation = [0, 0];
+    for (let x = 0; x < N; x++) {
       previousCorrected = cFilter.filter({ previousCorrected, observation });
     }
     Correction.minTrace = previousCorrected.covariance[0][0] + previousCorrected.covariance[1][1];
   }
 
-  update(VOG, current, VTW, heading) {
+  update(groundSpeed, current, boatSpeed, heading) {
+    if (groundSpeed.n < 2 || current.n < 2 || boatSpeed.n < 2) return;
     // Rotation matrix for -theta
     const cosTheta = Math.cos(heading);
     const sinTheta = Math.sin(heading);
 
-    const rotateToVesselFrame = (vector) => [
+    const rotateValue = (vector) => ([
       cosTheta * vector[0] + sinTheta * vector[1],
-      -sinTheta * vector[0] + cosTheta * vector[1],
-    ];
+      -sinTheta * vector[0] + cosTheta * vector[1]]
+    );
 
-    // Transform VOG and current to vessel frame
-    const VOG_vessel = rotateToVesselFrame(VOG);
-    const current_vessel = rotateToVesselFrame(current);
+    const rotateVariance = (vector) => (
+      [
+        [vector[0] * cosTheta ** 2 + vector[1] * sinTheta ** 2,
+        (vector[0] - vector[1]) * cosTheta * sinTheta],
+        [(vector[0] - vector[1]) * cosTheta * sinTheta,
+        vector[0] * sinTheta ** 2 + vector[1] * cosTheta ** 2]
+      ]
+    );
 
-    // Observation model: z = VOG_vessel - current_vessel - VTW
+    var groundVector = rotateValue(groundSpeed.obs);
+    var currentVector = rotateValue(current.obs);
+    var boatVector = boatSpeed.obs;
+
     const observation = [
-      VTW[0] - VOG_vessel[0] - current_vessel[0],
-      VTW[1] - VOG_vessel[1] - current_vessel[1],
+      -boatVector[0] + groundVector[0] - currentVector[0],
+      -boatVector[1] + groundVector[1] - currentVector[1]
     ];
-    this.filterState = this.filter.filter({ previousCorrected: this.filterState, observation });
+
+    var groundCov = rotateVariance(groundSpeed.variance);
+    var currentCov = rotateVariance(current.variance);
+    var boatCov = [[boatSpeed.variance[0], 0], [0, boatSpeed.variance[1]]];
+
+    const observationCovariance = [[
+      groundCov[0][0] + currentCov[0][0] + boatCov[0][0],
+      groundCov[0][1] + currentCov[0][1] + boatCov[0][1]],
+    [
+      groundCov[1][0] + currentCov[1][0] + boatCov[1][0],
+      groundCov[1][1] + currentCov[1][1] + boatCov[1][1]],
+    ];
+
+    this.filterState = this.filter.filter({ previousCorrected: this.filterState, observation, observationCovariance });
   }
+
+
+
 
   getCorrection() {
     return [this.x, this.y, this.N];
   }
 
   getInfo() {
-    return { x: this.x, y: this.y, N: this.N, trace: 100 * Correction.minTrace/this.trace };
+    return { x: this.x, y: this.y, N: this.N };
   }
 
   get N() {
@@ -125,7 +150,7 @@ class CorrectionTable {
   /**
    * Represents a 2D correction table for heel and speed.
    */
-  constructor(heelStep = 5, speedStep = 1, maxHeel = 45, maxSpeed = 20, stability=100000) {
+  constructor(heelStep = 5, speedStep = 1, maxHeel = 45, maxSpeed = 20, stability = 100000) {
     // possible bug if max is not a multiplication of step
     this.heelStep = heelStep; // Step size for heel
     this.speedStep = speedStep; // Step size for speed
@@ -168,9 +193,9 @@ class CorrectionTable {
     return { heelIndex, speedIndex };
   }
 
-  update(VOG, current, VTW, heading, heel, speed) {
+  update(groundSpeed, current, boatSpeed, heading, heel, speed) {
     const i = this._getIndices(heel, speed);
-    this.table[i.heelIndex][i.speedIndex].update([VOG.x, VOG.y], [current.x, current.y], [VTW.x, VTW.y], heading);
+    this.table[i.heelIndex][i.speedIndex].update(groundSpeed, current, boatSpeed, heading);
   }
 
   getKalmanCorrection(heel, speed) {
@@ -196,7 +221,7 @@ class CorrectionTable {
     if (totalWeight == 0) return { x: 0, y: 0, totalWeight };
     x = x / totalWeight;
     y = y / totalWeight;
-    return { x, y, totalWeight};
+    return { x, y, totalWeight };
   }
 
   findNeighbours(heel, speed) {
@@ -270,7 +295,7 @@ class CorrectionTable {
   }
 
 
-  static fromJSON(data, stability ) {
+  static fromJSON(data, stability) {
     const instance = new CorrectionTable(); // Replace `YourClass` with the actual class name
     instance.heelStep = data.heelStep;
     instance.speedStep = data.speedStep;

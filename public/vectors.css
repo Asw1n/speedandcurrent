@@ -57,6 +57,14 @@ line {
   stroke: black;
 }
 
+#residu {
+  stroke: pink;
+}
+
+#current {
+  stroke: rgb(35, 89, 7);
+}
+
 
 #groundSpeed {
   stroke: darkgray;

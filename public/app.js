@@ -3,6 +3,7 @@ const API_BASE_URL = "/plugins/speedandcurrent"; // Adjust based on your server 
 let updateInterval = 1000;
 let updateTimer;
 let updatesPaused = false;
+let cartesian = true;
 
 let vAngle = 1;
 let dAngle = 2;
@@ -47,6 +48,18 @@ function handleAngleUnitChange(value) {
   vAngle = 1;
   dAngle = 2;
 }
+
+
+
+function handleTableStyleChange(value) {
+  if (value == "cartesian") {
+    cartesian = true ;
+  }
+  else {
+    cartesian = false;
+  }
+}
+
 
 
 function cAngle(value) {
@@ -214,11 +227,22 @@ function updateTable(data) {
 
       // Display correction values if available
       if (correction.N > 0) {
-        cell.innerHTML = `
+        if (cartesian) {
+          cell.innerHTML = `
                     <div><strong>X:</strong> ${cSpeed(correction.x)}</div>
                     <div><strong>Y:</strong> ${cSpeed(correction.y)}</div>
                     <div><strong>N:</strong> ${correction.N}</div>
                 `;
+        }
+        else {
+          const speed = j * speedStep;
+          factor = (correction.x + speed) / speed;
+          cell.innerHTML = `
+                    <div><strong>factor:</strong> ${factor.toFixed(2)}</div>
+                    <div><strong>leeway:</strong> ${cAngle(Math.atan2(correction.y, speed))}</div>
+                    <div><strong>N:</strong> ${correction.N}</div>
+                `;
+        }
       }
       else {
         cell.innerText = "—";
@@ -265,6 +289,8 @@ function toggleUpdates() {
     startUpdates();
   }
 }
+
+
 
 
 //document.getElementById('toggle-updates').addEventListener('click', toggleUpdates);

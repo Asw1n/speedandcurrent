@@ -20,7 +20,7 @@
         <option value="kmh">km/h</option>
       </select>
     </div>
-  
+
     <!-- Angle Unit Selection -->
     <div class="menu-item dropdown">
       <label for="angle-unit">Angle:</label>
@@ -29,47 +29,55 @@
         <option value="degrees" selected>degrees</option>
       </select>
     </div>
-  
-  
+
+    <!-- Table style Selection -->
+    <div class="menu-item dropdown">
+      <label for="table-style">Table style:</label>
+      <select id="table-style" onchange="handleTableStyleChange(this.value)">
+        <option value="cartesian" selected>cartesian</option>
+        <option value="polar" >polar</option>
+      </select>
+    </div>
+
+
     <!-- Pause Button -->
     <button id="toggle-updates" class="menu-item" onclick="toggleUpdates()">Pause</button>
-  
+
     <!-- messages -->
 
-        <div id="message">
-          hoi
-        </div>
+    <div id="message">
+    </div>
 
   </header>
-  
+
   <!-- Content below the fixed menu -->
   <main class="content">
-    
-<section class="svg-section">
-  <object data="vectors.html" width="100%" height="500px" type="text/html"></object>
-</section>
+
+    <section class="svg-section">
+      <object data="vectors.html" width="100%" height="500px" type="text/html"></object>
+    </section>
 
 
-  <section class="delta-section">
-    <h2>Deltas</h2>
-    <div id="delta-container">
-      <!-- Speeds table will be populated here -->
-    </div>
-  </section>
+    <section class="delta-section">
+      <h2>Deltas</h2>
+      <div id="delta-container">
+        <!-- Speeds table will be populated here -->
+      </div>
+    </section>
 
-  <section class="speeds-section">
-    <h2>Vectors</h2>
-    <div id="speeds-container">
-      <!-- Speeds table will be populated here -->
-    </div>
-  </section>
+    <section class="speeds-section">
+      <h2>Vectors</h2>
+      <div id="speeds-container">
+        <!-- Speeds table will be populated here -->
+      </div>
+    </section>
 
-  <section class="attitude-section">
-    <h2>Attitude</h2>
-    <div id="attitude-container">
-      <!-- attitude table will be populated here -->
-    </div>
-  </section>
+    <section class="attitude-section">
+      <h2>Attitude</h2>
+      <div id="attitude-container">
+        <!-- attitude table will be populated here -->
+      </div>
+    </section>
 
 
     <section class="table-section">
@@ -81,13 +89,13 @@
 
 
 
-  <section class="options-section">
-    <h2>Plugin options</h2>
-    <div id="options-content">
-      <!-- Options table will be populated here -->
-    </div>
-  </section>
-    </main>
+    <section class="options-section">
+      <h2>Plugin options</h2>
+      <div id="options-content">
+        <!-- Options table will be populated here -->
+      </div>
+    </section>
+  </main>
 
 
 

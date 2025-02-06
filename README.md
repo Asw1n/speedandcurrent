@@ -35,12 +35,13 @@ The most important parameters for the plugin deal with the correction table. The
 - Changing one of the the table dimensions will result in a loss of all existing estimations. 
 
 ### **2. Stability and quality of the estimations**
-The two stability parameters, one for correction estimation and one for current estimation, indicate how stable the estimations should be. 
+The three stability parameters, one for correction estimation and two for current estimation, indicate how stable the estimations should be. 
 - More stable estimations will change more slowly and take longer to adapt to changed circumstances. Less stable estimations will adapt quicker to changed circumstances but will be more vulnarable to corrupt observations or odd situations.
-- The stability of the correction table should be larger than that of the current estimation.
+- The stability of the correction table should be 2-3 units larger than that of the current estimation.
 - If you are sure that there is no current at all you can tell the plugin. It will increase the quality of the estimations for the correction table. Set the assume no current parameter to true for this. 
 - If you start with the correction table its estimations will be not too trustworthy. You can therefore disable the correction of vessel speed. The plugin will still calculate this as it is needed to build up estimations. But a corrected speed will not be outputted as deltas to the SignalK server.
 - If you are content with the correction table you can, temporarely, prevent it from being updated further. This can be handy for very dynamic circumstances that might compromise the estimations otherwise.
+- my personnal stability settings are 7, 5, 2 when learning, 8, 4, 2 when my correction table has matured.
 
 ### **3. plugin output**
 You an control what deltas the plugin outputs.
@@ -62,28 +63,16 @@ The graphical representation of the speed veectors, current vector and correctio
 - Vessel speed errors depend on **heel** and **speed**. They are are assumed constant for a given speed and heel angle.
 - A correction table is used to store speed errors for steps in speed and heel angle.  
 - Each cell in the correction table contains a **Kalman filter** that updates speed corrections every time new speed measurements come available.  
-- The speed measurement is the corrected by substracting the correction from the correction table. The correction is **interpolated** based on nearby table cells, weighted by uncertainty of the correction provided by the Kalman filter.  
+- The speed measurement is the corrected by substracting the correction from the correction table. The correction is **interpolated** based on nearby table cells, weighted by uncertainty of the correction provided by the Kalman filter. 
+- ![correction model](correctionModel.png) 
 
 ### **2. Current Estimation Model**  
 - The water current is estimated as a **slowly changing** vector. 
-- A **Kalman filter** updates the current based on the difference between (corrected) speed and GPS speed.
-
-### **3. Mathematical Model** 
-The system is based on the equation:
-![Equation](CodeCogsEqn.svg)
-
----
+- A **Kalman filter** updates the current based on the difference between GPS speed and corrected speed .
+- ![correctioncurrent model](currentModel.png)
 
 
-\[
-\mathbb{R}(-\theta_{n} ) \cdot  {\vec{correction}} + {\vec{current}} =  \mathbb{R}(\theta_{n} ) \cdot ({\vec{STW}_{n}}) - {\vec{VOG}_{n}}  
-\]
-Where:  
-- \(\mathbb{R}(\theta)\) is the **rotation matrix** for vessel heading.  
-- \(\vec{VOG}\) is the vessel's **velocity over ground**.  
-- \(\vec{STW}\) is **speed through water**.  
-- \(\vec{correction}\) is the estimated **speed correction**.  
-- \(\vec{current}\) is the estimated **water current**.  
 
 ---
+
 
