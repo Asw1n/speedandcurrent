@@ -28,6 +28,7 @@
     "displayName": "Speed and current"
   },
   "dependencies": {
-    "kalman-filter": "^2.3.0"
+    "kalman-filter": "^2.3.0",
+    "signalkutilities": "^1.0.0"
   }
 }
