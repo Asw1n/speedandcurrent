@@ -1,78 +1,7 @@
-const { PolarStat, DeltaStat, DeltaBase, DeltaSubscribe, PolarDeltaBase, PolarDeltaCatch, PolarDeltaSubscribe, SI } = require('signalkutilities');
+const {  PolarStat, DeltaStat, DeltaBase, DeltaSubscribe, PolarDeltaBase, PolarDeltaCatch, PolarDeltaSubscribe, SI, Reporter } = require('signalkutilities');
 const { CorrectionTable } = require('./correctionTable.js');
 const { KalmanFilter } = require('kalman-filter');
 
-class Reporter {
-  constructor() {
-    this.report = {};
-    this.options = null;
-  }
-
-  newReport(timestamp, options) {
-    this.report = {
-      timestamp: timestamp,
-      options: options,
-      polarSteps: [
-      ],
-      attitudeSteps: [
-      ],
-      deltas: [
-      ],
-      tables: [],
-    };
-  }
-
-  addPolar(label, polar) {
-    this.report.polarSteps.push(
-      {
-        label: label,
-        speed: (polar.pValue.speed),
-        angle: (polar.pValue.angle)
-      });
-  }
-
-  addAttitude(label, delta) {
-    this.report.attitudeSteps.push(
-      {
-        label: label,
-        roll: (delta.value.roll),
-        pitch: (delta.value.pitch),
-      }
-    );
-  }
-
-  addRotation(label, value) {
-    this.report.attitudeSteps.push(
-      {
-        label: label,
-        roll: (value.roll),
-        pitch: (value.pitch),
-      }
-    );
-  }
-
-  addDelta(label, value) {
-    this.report.deltas.push(
-      {
-        label: label,
-        value: (value.value),
-      }
-    );
-
-  }
-
-  addTable(table, heel, speed) {
-    const data = table.getInfo();
-    let { heelIndex, speedIndex } = table._getIndices(heel, speed);
-    data.heelIndex = heelIndex;
-    data.speedIndex = speedIndex;
-    this.report.tables.push(data);
-  }
-
-  getReport() {
-    return this.report;
-  }
-}
 
 
 
@@ -83,7 +12,7 @@ module.exports = function (app) {
   let isRunning = false;
   let corrTable = null;
   let lastSave = null;
-  var residu, heading, attitude, boatSpeed, boatSpeedPolar, correctedBoatSpeed, groundSpeed, current, currentDelta, speedCorrection, reporter;
+  var residual, heading, attitude, boatSpeed, boatSpeedPolar, correctedBoatSpeed, groundSpeed, current, currentDelta, speedCorrection, reporter;
 
 
   const plugin = {};
@@ -204,7 +133,7 @@ module.exports = function (app) {
       else {
         const v = { deltas: [], polars: [] };
         const d = [heading, attitude];
-        const p = [groundSpeed, boatSpeedPolar, correctedBoatSpeed, current, speedCorrection, residu];
+        const p = [groundSpeed, boatSpeedPolar, correctedBoatSpeed, current, speedCorrection, residual];
         p.forEach(polar => {
           v.polars.push({
             id: polar.id,
@@ -235,39 +164,35 @@ module.exports = function (app) {
 
   plugin.start = (opts) => {
     app.debug("plugin started");
+
+    // make options survive to the stop function
     options = opts;
 
     // correction table
-    if ( enforceConsistancy() && !options.doStartFresh) {
-      corrTable = CorrectionTable.fromJSON(options.correctionTable, 10 ** options.correctionStability);
-      app.debug("Correction table loaded");
-      lastSave = new Date();
-    }
-    else {
-      corrTable = new CorrectionTable(SI.fromDegrees(options.heelStep), SI.fromKnots(options.speedStep), SI.fromDegrees(options.maxHeel), SI.fromKnots(options.maxSpeed), 10 ** options.correctionStability);
-      app.debug("Correction table created");
-      options.doStartFresh = false;
-      lastSave = saveTable(options, corrTable);
-    }
+    const table = loadTable(options);
+    
 
     // heading
     // TBD: headingTrue or headingMagnetic
     heading = new DeltaSubscribe("navigation.headingTrue");
     heading.subscribe(app, plugin.id, unsubscribes);
-    heading.setId("heading");
+    heading.setDisplayAttributes("heading","heading");
 
     //attitude
     attitude = new DeltaSubscribe("navigation.attitude");
     attitude.value = { pitch: 0, roll: 0, yaw: 0 }; //prevents errors when there is no attitude sensor
-    attitude.setId("attitude");
+    attitude.setDisplayAttributes("attitude","attitude");
     attitude.subscribe(app, plugin.id, unsubscribes);
-
+ 
     // current
     currentDelta = new DeltaBase("environment.current");
-
     current = new PolarDeltaBase();
-    current.setId("current", "ref_ground", "current");
+    current.setDisplayAttributes("current", "ref_ground", "current");
+
     const currentStat = new PolarStat(current);
+
+    // magnetic variance 
+    variance = new DeltaSubscribe("navigation.magneticVariation");
 
     // boat speed
     if (options.preventDuplication) {
@@ -281,29 +206,31 @@ module.exports = function (app) {
     }
 
     boatSpeedPolar = new PolarDeltaBase("navigation.speedThroughWater", "environment.wind.directionTruenavigation.leewayAngle");
-    boatSpeedPolar.setId("boatSpeed", "ref_boat", "speed through water");
+    boatSpeedPolar.setDisplayAttributes("boatSpeed", "ref_boat", "observed boat speed");
     const boatSpeedStat = new PolarStat(boatSpeedPolar);
 
     correctedBoatSpeed = new PolarDeltaBase("navigation.speedThroughWater", "environment.wind.directionTruenavigation.leewayAngle");
-    correctedBoatSpeed.setId("correctedSpeed", "ref_boat", "corrected boat Speed");
+    correctedBoatSpeed.setDisplayAttributes("correctedSpeed", "ref_boat", "estimated boat Speed");
 
     boatSpeedRefGround = new PolarDeltaBase();
-    
+    boatSpeedRefGround.setDisplayAttributes("boatSpeedRefGround", "ref_ground","boat speed over ground");
+
 
     // ground speed
     groundSpeed = new PolarDeltaSubscribe("navigation.speedOverGround", "navigation.courseOverGroundTrue");
     groundSpeed.subscribe(app, plugin.id, unsubscribes);
-    groundSpeed.setId("groundSpeed", "ref_ground", "speed over ground");
+    groundSpeed.setDisplayAttributes("groundSpeed", "ref_ground", "observed speed over ground");
     const groundSpeedStat = new PolarStat(groundSpeed);
 
     // correction vector
     speedCorrection = new PolarDeltaBase();
-    speedCorrection.setId("correction", "ref_boat", "correction");
+    speedCorrection.setDisplayAttributes("correction", "ref_boat", "correction");
 
-    // residu
-    residu = new PolarDeltaBase();
-    residu.setId("residu", "ref_boat", "residu");
+    // residual
+    residual = new PolarDeltaBase();
+    residual.setDisplayAttributes("residual", "ref_ground", "residual");
 
+    // Make reporting object for webApp
     reporter = new Reporter();
 
     // filter for current
@@ -311,15 +238,15 @@ module.exports = function (app) {
     const currentEstimator = new KalmanFilter({
       observation: {
         stateProjection: [[1, 0], [0, 1]], // observation matrix H
-        covariance: [[1 * stability, 0], [0, 1 * stability]], //measurement noise R
+        covariance: [[1 , 0], [0, 1 ]], //measurement noise R
         dimension: 2
       },
       dynamic: {
-        transition: [[.9993, 0], [0, .9993]], // state transition matrix F
-        covariance: [1, 1],// process noise covariance matrix Q
+        transition: [[1, 0], [0, 1]], // state transition matrix F
+        covariance: [1 / stability, 1 / stability],// process noise covariance matrix Q
         init: {
-          mean:[[0],[0]],
-          covariance: [[1 , 0], [0, 1 ]]
+          mean: [[0], [0]],
+          covariance: [[1 / stability, 0], [0, 1 / stability]]
         }
       }
     });
@@ -343,14 +270,13 @@ module.exports = function (app) {
 
     isRunning = true;
 
-function addSome() {
-  groundSpeed.addVector({ x: SI.fromKnots(0), y: SI.fromKnots(1)});
-}
+    // Debug function to induce current in GPS data
+    function addSome() {
+      groundSpeed.addVector({ x: SI.fromKnots(0), y: SI.fromKnots(1) });
+    }
 
-
+    // Main function, estimates boatSpeed, leeway and current
     function calculate(timestamp) {
-
-
       // prepare iteration
       boatSpeedPolar.setVValue({ x: boatSpeed.value, y: 0 });
       groundSpeedStat.sample();
@@ -359,95 +285,135 @@ function addSome() {
       heel = attitude.value.roll;
       speed = boatSpeed.value;
       theta = heading.value;
-      reporter.newReport(timestamp, options);
-      reporter.addPolar("ground speed", groundSpeed);
-      reporter.addPolar("observed boat speed", boatSpeedPolar);
-      reporter.addAttitude("Attitude", attitude);
-      reporter.addDelta("heading", heading);
+      if (!Number.isFinite(heel)) {
+        app.debug("Heel is not a valid number, skipping calculation");
+        return;
+      }
+      if (!Number.isFinite(speed)) {
+        app.debug("Speed is not a valid number, skipping calculation");
+        return;
+      }
+      if (!Number.isFinite(theta)) {
+        app.debug("Heading is not a valid number, skipping calculation");
+        return;
+      }
+      reporter.newReport();
+      reporter.addOptions(options);
+      reporter.addPolar( groundSpeed);
+      reporter.addPolar( boatSpeedPolar);
+      reporter.addAttitude( attitude);
+      reporter.addDelta( heading);
 
       // update correction table
       if (options.doCorrect) {
-        corrTable.update(groundSpeedStat, currentStat, boatSpeedStat, theta, heel, speed);
+        table.update(speed, heel, groundSpeedStat, currentStat, boatSpeedStat, theta);
       }
-      reporter.addTable(corrTable, heel, speed);
+      reporter.addTable(table, speed, heel);
 
       // correct and estimate boat speed
       estimateBoatSpeed();
 
-      if (!options.noCurrent ) {
+      if (!options.noCurrent) {
+        // estimate current ;
         estimateCurrent();
-        // estimate current when there is a corrected boat speed;
       }
-      calcResidu() ;
+      calcResidual();
 
+      // translate current into signalK data structure
       const c = current.getPValue();
-      const cc = { drift: current.speed, setTrue: current.angle, setMagnetic: null };
+      const cc = { drift: current.speed, setTrue: current.angle, setMagnetic: (current.angle - variance.value + Math.PI) % (2 * Math.PI) - Math.PI };
       currentDelta.setValue(cc);
 
-      // Send calculated dalts
+      // Send calculated delta's
       if (options.doCurrent) DeltaBase.sendDeltas(app, plugin.id, [currentDelta]);
       if (options.doCorrect) PolarDeltaBase.sendDeltas(app, plugin.id, [correctedBoatSpeed]);
 
       // Save correction table 
       // periodically 
       if (new Date() - lastSave > 5 * 60 * 1000) {
-        lastSave = saveTable(options, corrTable);
+        lastSave = saveTable(options, table);
       }
     }
 
+    // estimates boat speed from observed boatSpeed and correction
     function estimateBoatSpeed() {
-      cor = corrTable.getKalmanCorrection(heel, speed);
+      cor = table.getKalmanCorrection(speed, heel);
       // app.debug(cor);
       correctedBoatSpeed.copyFrom(boatSpeedPolar);
       speedCorrection.setVValue(cor);
-      
-      reporter.addPolar("correction", speedCorrection);
+
+      reporter.addPolar(speedCorrection);
       correctedBoatSpeed.add(speedCorrection);
-      reporter.addPolar("corrected boatSpeed", correctedBoatSpeed);
       const v = correctedBoatSpeed.getVValue();
-      const observation =[v.x, v.y];
-      boatSpeedEstimation = boatSpeedEstimator.filter({ previousCorrected: boatSpeedEstimation, observation  });
+      const observation = [v.x, v.y];
+      boatSpeedEstimation = boatSpeedEstimator.filter({ previousCorrected: boatSpeedEstimation, observation });
       correctedBoatSpeed.setKValue(boatSpeedEstimation);
-      reporter.addPolar("estimated boatSpeed", correctedBoatSpeed);
+      reporter.addPolar(correctedBoatSpeed);
     }
 
+    // estimates current from observed groundspeed and estimated boatspeed 
     function estimateCurrent() {
       boatSpeedRefGround.copyFrom(correctedBoatSpeed);
       boatSpeedRefGround.rotate(theta);
-      reporter.addPolar("boat speed over ground", boatSpeedRefGround);
+      reporter.addPolar( boatSpeedRefGround);
       current.copyFrom(groundSpeed);
       current.substract(boatSpeedRefGround);
-      reporter.addPolar("ground minus boat", current);
+      reporter.addPolar( current);
       const v = current.getVValue();
       const observation = [v.x, v.y];
       currentEstimation = currentEstimator.filter({ previousCorrected: currentEstimation, observation });
       current.setKValue(currentEstimation);
-      reporter.addPolar("estimated current", current);
+      reporter.addPolar( current);
     }
 
-    function calcResidu() {
-      residu.copyFrom(groundSpeed);
+    // Calculate what ground speed is observed that is not attributed to estimated boat speed or estimated current
+    function calcResidual() {
+      residual.copyFrom(groundSpeed);
       boatSpeedRefGround.copyFrom(correctedBoatSpeed);
       boatSpeedRefGround.rotate(theta);
-      residu.substract(boatSpeedRefGround);
-      residu.substract(current);
-      reporter.addPolar("residu", residu);
+      residual.substract(boatSpeedRefGround);
+      residual.substract(current);
+      reporter.addPolar(residual);
     }
 
-
-    function enforceConsistancy() {
+    // Make sure the table matches the settings
+    function enforceConsistancy(row, col ) {
       // function is bugged due to IS units vs knots and degrees
       if (!options?.correctionTable) return false;
       const table = options.correctionTable;
-      options.maxSpeed = Math.ceil(options.maxSpeed / options.speedStep) * options.speedStep;
-      options.maxHeel = Math.ceil(options.maxHeel / options.heelStep) * options.heelStep;
-      if (!isEqual(SI.fromKnots(options.maxSpeed), table.maxSpeed)) return false;
-      if (!isEqual(SI.fromDegrees(options.maxHeel), table.maxHeel)) return false;
-      if (!isEqual(SI.fromKnots(options.speedStep), table.speedStep)) return false;
-      if (!isEqual(SI.fromDegrees(options.heelStep), table.heelStep)) return false;
+      if (!table) return false;
+      if (!table.row) return false;
+      if (table.row.min != row.min) return false;
+      if (table.row.max != row.max) return false;
+      if (table.row.step != row.step) return false;
+      if (table.col.min != col.min) return false;
+      if (table.col.max != col.max) return false;
+      if (table.col.step != col.step) return false;
       return true;
     }
 
+    function loadTable(options) {
+      const row = { min: 0, max: SI.fromKnots(options.maxSpeed), step: SI.fromKnots(options.speedStep) };
+      const col = { min: -SI.fromDegrees(options.maxHeel), max: SI.fromDegrees(options.maxHeel), step: SI.fromDegrees(options.heelStep) };
+      let table;
+      if ( false && enforceConsistancy(row, col) && !options.doStartFresh) {
+        table = CorrectionTable.fromJSON(options.correctionTable, options.correctionStability);
+        app.debug("Correction table loaded");
+        lastSave = new Date();
+      }
+      else {
+        table = new CorrectionTable(row, col, options.correctionStability);
+        app.debug("Correction table created");
+        options.doStartFresh = false;
+        lastSave = saveTable(options, table);
+         app.debug(table.table.length);  
+        app.debug(table.table[0].length);
+      }
+      table.setDisplayAttributes("correctionTable", "Speed / Heel");
+      return table;
+    }
+
+    // compare floats
     function isEqual(a, b) {
       const TOLERANCE = 1e-5;
       if (Math.abs(a - b) < TOLERANCE) {
@@ -466,8 +432,8 @@ function addSome() {
       lastSave = saveTable(options, corrTable);
     }
     options = {};
-    
-    residu = null;
+
+    residual = null;
     heading = null;
     attitude = null;
     boatSpeed = null;

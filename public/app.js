@@ -1,9 +1,10 @@
 const API_BASE_URL = "/plugins/speedandcurrent"; // Adjust based on your server configuration
+import TableRenderer from './tableRenderer.js';
+
 
 let updateInterval = 1000;
 let updateTimer;
 let updatesPaused = false;
-let cartesian = true;
 
 let vAngle = 1;
 let dAngle = 2;
@@ -11,20 +12,7 @@ let vSpeed = 1;
 let dSpeed = 1;
 
 
-
-// function toggleUpdates() {
-//   let button = document.getElementById("toggle-updates");
-//   if (button.innerText === "Pause") {
-//     button.innerText = "Resume";
-//   } else {
-//     button.innerText = "Pause";
-//   }
-// }
-
-
-
-
-function handleSpeedUnitChange(value) {
+export function handleSpeedUnitChange(value) {
   if (value == "knots") {
     vSpeed = 1.943844;
     dSpeed = 1;
@@ -39,7 +27,7 @@ function handleSpeedUnitChange(value) {
   dSpeed = 1;
 }
 
-function handleAngleUnitChange(value) {
+export function handleAngleUnitChange(value) {
   if (value == "degrees") {
     vAngle = 180 / Math.PI;
     dAngle = 0;
@@ -51,16 +39,15 @@ function handleAngleUnitChange(value) {
 
 
 
-function handleTableStyleChange(value) {
+export function handleTableStyleChange(value) {
+  console.log(value);
   if (value == "cartesian") {
-    cartesian = true ;
+    tableRenderer.setCellFormat(cartesian);
   }
   else {
-    cartesian = false;
+    tableRenderer.setCellFormat(polar);
   }
 }
-
-
 
 function cAngle(value) {
   value *= vAngle;
@@ -71,6 +58,45 @@ function cSpeed(value) {
   value *= vSpeed;
   return value.toFixed(dSpeed);
 }
+
+function cartesian(correction, speed, heel) {
+  if (correction.N == 0) return null;
+  return ` <div><strong>X:</strong> ${cSpeed(correction.x)}</div>
+           <div><strong>Y:</strong> ${cSpeed(correction.y)}</div>
+           <div><strong>N:</strong> ${correction.N}</div>
+          `;
+}
+
+function polar(correction, speed, heel) {
+  if (speed == 0 || correction.N == 0) return null;
+  const factor = (correction.x + speed) / speed;
+  return ` <div><strong>factor:</strong> ${factor.toFixed(2)}</div>
+           <div><strong>leeway:</strong> ${cAngle(Math.atan2(correction.y, speed))}</div>
+           <div><strong>N:</strong> ${correction.N}</div>
+          `;
+}
+
+function formatCellX(value, speed, heel) {
+  if (value.N == 0) return null;
+  return cSpeed(value.x);
+}
+
+function formatCellY(value, speed, heel) {
+  if (value.N == 0) return null;
+  return Math.abs(cSpeed(value.y));
+}
+
+function formatCellXPolar(value, speed, heel) {
+  if (value.N == 0) return null;
+  const factor = (correction.x + speed) / speed;
+  return factor.toFixed(2);
+}
+
+function formatCellYPolar(value, speed, heel) {
+  if (value.N == 0) return null;
+  return Math.abs(cAngle(Math.atan2(value.y, speed)));
+}
+
 
 
 async function getFromServer(endpoint) {
@@ -114,16 +140,20 @@ function updateOptions(data) {
   table.appendChild(headerRow);
 
   Object.entries(data.options).forEach(([key, value]) => {
-    const row = document.createElement('tr');
-    row.innerHTML = `<td>${key}</td><td>${value}</td>`;
-    table.appendChild(row);
+    const type = typeof value;
+    if (type === 'string' || type === 'number' || type === 'boolean') {
+
+      const row = document.createElement('tr');
+      row.innerHTML = `<td>${key}</td><td>${value}</td>`;
+      table.appendChild(row);
+    };
   });
 
   optionsContent.appendChild(table);
 }
 
 
-function updateSpeed(data) {
+function updatePolar(data) {
   const stepsList = document.getElementById('speeds-container');
   stepsList.innerHTML = ''; // Clear previous steps
 
@@ -134,6 +164,8 @@ function updateSpeed(data) {
 
   data.polarSteps.forEach(step => {
     const row = document.createElement('tr');
+    if (step.id != undefined)
+      row.classList.add(step.id);
     row.innerHTML = `<td>${step.label}</td><td>${cSpeed(step.speed)}</td><td>${cAngle(step.angle)}</td>`;
     table.appendChild(row);
   });
@@ -152,6 +184,8 @@ function updateDelta(data) {
 
   data.deltas.forEach(step => {
     const row = document.createElement('tr');
+    if (step.id != undefined)
+      row.classList.add(step.id);
     row.innerHTML = `<td>${step.label}</td><td>${cAngle(step.value)}</td>`;
     table.appendChild(row);
   });
@@ -170,6 +204,8 @@ function updateAttitude(data) {
 
   data.attitudeSteps.forEach(step => {
     const row = document.createElement('tr');
+    if (step.id != undefined)
+      row.classList.add(step.id);
     row.innerHTML = `<td>${step.label}</td><td>${cAngle(step.roll)}</td><td>${cAngle(step.pitch)}</td>`;
     table.appendChild(row);
   });
@@ -177,87 +213,13 @@ function updateAttitude(data) {
 }
 
 function updateTable(data) {
-
   const tableContainer = document.getElementById('table-container');
   tableContainer.innerHTML = '';
-  const { heelStep, speedStep, maxHeel, maxSpeed, table, heelIndex, speedIndex } = data.tables[0];
-
-  // Create a table element
-  const tableElement = document.createElement('table');
-  tableElement.style.borderCollapse = 'collapse';
-  tableElement.style.width = '100%';
-
-  // Create header row
-  const headerRow = document.createElement('tr');
-  const firstHeaderCell = document.createElement('th');
-  firstHeaderCell.innerText = "Heel \\ Speed";
-  firstHeaderCell.style.border = '1px solid black';
-  firstHeaderCell.style.padding = '5px';
-  headerRow.appendChild(firstHeaderCell);
-
-  for (let speed = 0; speed <= maxSpeed; speed += speedStep) {
-    const headerCell = document.createElement('th');
-    headerCell.innerText = `${cSpeed(speed)} `;
-    headerCell.style.border = '1px solid black';
-    headerCell.style.padding = '5px';
-    headerRow.appendChild(headerCell);
-  }
-
-  tableElement.appendChild(headerRow);
-
-  // Create rows for each heel step
-  for (let i = 0; i < table.length; i++) {
-    const heel = - maxHeel + i * heelStep;
-    const row = document.createElement('tr');
-
-    // First column with the heel value
-    const heelCell = document.createElement('th');
-    heelCell.innerText = `${cAngle(heel)}`;
-    heelCell.style.border = '1px solid black';
-    heelCell.style.padding = '5px';
-    row.appendChild(heelCell);
-
-    // Add cells for each speed step
-    for (let j = 0; j < table[i].length; j++) {
-      const correction = table[i][j];
-      const cell = document.createElement('td');
-      cell.style.border = '1px solid black';
-      cell.style.padding = '5px';
-      cell.style.textAlign = 'center';
-
-      // Display correction values if available
-      if (correction.N > 0) {
-        if (cartesian) {
-          cell.innerHTML = `
-                    <div><strong>X:</strong> ${cSpeed(correction.x)}</div>
-                    <div><strong>Y:</strong> ${cSpeed(correction.y)}</div>
-                    <div><strong>N:</strong> ${correction.N}</div>
-                `;
-        }
-        else {
-          const speed = j * speedStep;
-          factor = (correction.x + speed) / speed;
-          cell.innerHTML = `
-                    <div><strong>factor:</strong> ${factor.toFixed(2)}</div>
-                    <div><strong>leeway:</strong> ${cAngle(Math.atan2(correction.y, speed))}</div>
-                    <div><strong>N:</strong> ${correction.N}</div>
-                `;
-        }
-      }
-      else {
-        cell.innerText = "—";
-        cell.style.color = '#ccc';
-      }
-      if (i == heelIndex && j == speedIndex) cell.style.color = '#F00';
-
-      row.appendChild(cell);
-    }
-
-    tableElement.appendChild(row);
-  }
-
+  const tableElement = tableRenderer.render(data.tables[0]);
   tableContainer.appendChild(tableElement);
 }
+
+
 
 
 async function fetchAndUpdateData() {
@@ -265,7 +227,7 @@ async function fetchAndUpdateData() {
   if (data) {
     //console.log(data);
     updateOptions(data);
-    updateSpeed(data);
+    updatePolar(data);
     updateAttitude(data);
     updateDelta(data);
     updateTable(data);
@@ -277,7 +239,7 @@ function startUpdates() {
   updateTimer = setInterval(fetchAndUpdateData, updateInterval);
 }
 
-function toggleUpdates() {
+export function toggleUpdates() {
   updatesPaused = !updatesPaused;
   const toggleButton = document.getElementById('toggle-updates');
 
@@ -293,10 +255,24 @@ function toggleUpdates() {
 
 
 
+
 //document.getElementById('toggle-updates').addEventListener('click', toggleUpdates);
 
 handleSpeedUnitChange("knots");
 handleAngleUnitChange("degrees");
+
+const tableRenderer = new TableRenderer();
+handleTableStyleChange("cartesian");
+tableRenderer.setColumnHeaderFormat(cAngle);
+tableRenderer.setRowHeaderFormat(cSpeed);
+
+
+// Attach functions to the window object to make them globally accessible
+window.handleSpeedUnitChange = handleSpeedUnitChange;
+window.handleAngleUnitChange = handleAngleUnitChange;
+window.handleTableStyleChange = handleTableStyleChange;
+window.toggleUpdates = toggleUpdates;
+
 
 // Initial fetch and start updates
 startUpdates();

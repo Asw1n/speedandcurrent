@@ -32,40 +32,28 @@ line {
   stroke-linecap: round;
 }
 
-#trueWind {
-  stroke: blue;
-}
-
-
 #boatSpeed {
-  stroke: rgb(0, 89, 255);
+  stroke: lightseagreen;
 }
 
 #correction {
   stroke: red;
 }
 
-#sensorSpeed {
-  stroke: green;
-}
-
-#apparentWind {
-  stroke: orange;
-}
 
 #correctedSpeed {
-  stroke: black;
+  stroke: seagreen;
 }
 
-#residu {
-  stroke: pink;
+#residual {
+  stroke: rgb(250, 140, 158);
 }
 
 #current {
-  stroke: rgb(35, 89, 7);
+  stroke: rgb(52, 52, 255) ;
 }
 
 
 #groundSpeed {
-  stroke: darkgray;
+  stroke: brown;
 }
