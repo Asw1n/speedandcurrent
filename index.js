@@ -19,14 +19,25 @@ module.exports = function (app) {
   plugin.id = "SpeedAndCurrent";
   plugin.name = "Speed and current";
   plugin.description = "An experimental plugin that uses sensor fusion to get boat speed, current and leeway.";
+
+
+
   plugin.schema = {
     type: "object",
     properties: {
-      doStartFresh: {
-        type: "boolean",
-        title: "Empty correction table",
-        description: "Restart with a fresh correction table. WARNING: all current corrections will be lost permanently!",
-        default: false
+      mode: {
+        type: "string",
+        title: "Plugin mode",
+        description: "The mode of the plugin.",
+        enum: ["Start with new correction table, no current",
+          "Start with new correction table, with current",
+          "Fresh correction table, no current",
+          "Fresh correction table, with current",
+          "Mature correction table, no current",
+          "Mature correction table, with current",
+          "Locked correction table",
+          "Manual configuration"],
+        default: "Start with new correction table, no current",
       },
       heelStep: {
         type: "number",
@@ -52,13 +63,20 @@ module.exports = function (app) {
         description: "Correction table maximum speed.",
         default: 9
       },
-      doEstimate: {
+      preventDuplication: {
+        type: "boolean",
+        title: "Prevent duplication of boat speed",
+        description: "Overwrite boat speed from sensor with corrected boat speed.",
+        default: true,
+      },
+
+      updateCorrectionTable: {
         type: "boolean",
         title: "Update correction table",
         description: "Update estimations in the correction table.",
         default: true,
       },
-      doCorrect: {
+      estimateBoatSpeed: {
         type: "boolean",
         title: "Correct boat speed",
         description: "Correct boat speed using correction table. This includes adding leeway.",
@@ -73,46 +91,79 @@ module.exports = function (app) {
         minimum: 5,
         maximum: 12
       },
-      preventDuplication: {
+      doStartFresh: {
         type: "boolean",
-        title: "Prevent duplication of boat speed",
-        description: "Overwrite boat speed from sensor with corrected boat speed.",
-        default: true,
+        title: "Empty correction table",
+        description: "Restart with a fresh correction table. WARNING: all current corrections will be lost permanently!",
+        default: false
       },
-      noCurrent: {
+      assumeCurrent: {
         type: "boolean",
-        title: "assume no current",
-        description: `The estimator assumes that there is no current. 
-        This can improve the quality of the estimation on standing waters.`,
+        title: "assume current",
+        description: "The estimator assumes that there is current.",
         default: false,
       },
-      doCurrent: {
+      estimateCurrent: {
         type: "boolean",
         title: "Estimate current",
         description: "Estimate water current.",
         default: true,
       },
-      currentStability1: {
+      currentStability: {
         type: "number",
-        title: "Stability of current estimation when updating correction",
+        title: "Stability of current estimation ",
         description: `The stability of the current estimation indicates how much the estimation is trusted 
         opposed to the calculation of current. Bigger values give more trust to the estimation and more sable estimations`,
         default: 5,
-        minimum: 4,
-        maximum: 8
-      },
-      currentStability2: {
-        type: "number",
-        title: "Stability of current estimation when correction is fixed",
-        description: `The stability of the current estimation indicates how much the estimation is trusted 
-        opposed to the calculation of current. Bigger values give more trust to the estimation and more sable estimations`,
-        default: 2,
         minimum: 1,
-        maximum: 5
-      },
+        maximum: 8
+      }
+    }
+  }; 
+  
+   plugin.uiSchema = {
+     'ui:order': ["mode", "maxSpeed", "speedStep", "maxHeel", "heelStep", "preventDuplication", "updateCorrectionTable", "estimateBoatSpeed", "correctionStability", "doStartFresh", "assumeCurrent", "estimateCurrent", "currentStability"],
+    doStartFresh: {
+      "ui:widget": "hidden",
+    },
+    heelStep: {
+      "ui:widget": "updown",
+    },
+    maxHeel: {
+      "ui:widget": "updown",
+    },
+    speedStep: {
+      "ui:widget": "updown",
+    },
+    maxSpeed: {
+      "ui:widget": "updown",
+    },
+    mode: {
+      "ui:widget": "select",
+    },
+     updateCorrectionTable: {
+      "ui:widget": "hidden",
+    },
+    estimateBoatSpeed: {
+      "ui:widget": "hidden",
+    },
+    correctionStability: {
+      "ui:widget": "hidden",
+    },
+    preventDuplication: {
+      "ui:widget": "checkbox",
+    },
+    assumeCurrent: {
+      "ui:widget": "hidden",
+    },
+    estimateCurrent: {
+      "ui:widget": "hidden",
+    },
+    currentStability: {
+      "ui:widget": "hidden",
     }
   };
-
+ 
   plugin.registerWithRouter = function (router) {
     app.debug('registerWithRouter');
 
@@ -164,9 +215,10 @@ module.exports = function (app) {
 
   plugin.start = (opts) => {
     app.debug("plugin started");
-
+ 
     // make options survive to the stop function
     options = opts;
+    loadPresets();
 
     // correction table
     const table = loadTable(options);
@@ -234,7 +286,7 @@ module.exports = function (app) {
     reporter = new Reporter();
 
     // filter for current
-    stability = 10 ** (options.doEstimate ? options.currentStability1 : options.currentStability2);
+    stability = 10 ** (options.currentStability);
     const currentEstimator = new KalmanFilter({
       observation: {
         stateProjection: [[1, 0], [0, 1]], // observation matrix H
@@ -270,10 +322,7 @@ module.exports = function (app) {
 
     isRunning = true;
 
-    // Debug function to induce current in GPS data
-    function addSome() {
-      groundSpeed.addVector({ x: SI.fromKnots(0), y: SI.fromKnots(1) });
-    }
+
 
     // Main function, estimates boatSpeed, leeway and current
     function calculate(timestamp) {
@@ -305,7 +354,7 @@ module.exports = function (app) {
       reporter.addDelta( heading);
 
       // update correction table
-      if (options.doCorrect) {
+      if (options.updateCorrectionTable) {
         table.update(speed, heel, groundSpeedStat, currentStat, boatSpeedStat, theta);
       }
       reporter.addTable(table, speed, heel);
@@ -313,24 +362,26 @@ module.exports = function (app) {
       // correct and estimate boat speed
       estimateBoatSpeed();
 
-      if (!options.noCurrent) {
+      if (options.assumeCurrent) {
         // estimate current ;
         estimateCurrent();
       }
       calcResidual();
 
-      // translate current into signalK data structure
-      const c = current.getPValue();
-      const cc = { drift: current.speed, setTrue: current.angle, setMagnetic: (current.angle - variance.value + Math.PI) % (2 * Math.PI) - Math.PI };
-      currentDelta.setValue(cc);
 
       // Send calculated delta's
-      if (options.doCurrent) DeltaBase.sendDeltas(app, plugin.id, [currentDelta]);
-      if (options.doCorrect) PolarDeltaBase.sendDeltas(app, plugin.id, [correctedBoatSpeed]);
+      if (options.estimateCurrent) {
+        // translate current into signalK data structure
+        const c = current.getPValue();
+        const cc = { drift: current.speed, setTrue: current.angle, setMagnetic: (current.angle - variance.value + Math.PI) % (2 * Math.PI) - Math.PI };
+        currentDelta.setValue(cc);
+        DeltaBase.sendDeltas(app, plugin.id, [currentDelta]);
+      }
+      if (options.estimateBoatSpeed) PolarDeltaBase.sendDeltas(app, plugin.id, [correctedBoatSpeed]);
 
       // Save correction table 
       // periodically 
-      if (new Date() - lastSave > 5 * 60 * 1000) {
+      if (options.updateCorrectionTable && new Date() - lastSave > 5 * 60 * 1000) {
         lastSave = saveTable(options, table);
       }
     }
@@ -358,7 +409,6 @@ module.exports = function (app) {
       reporter.addPolar( boatSpeedRefGround);
       current.copyFrom(groundSpeed);
       current.substract(boatSpeedRefGround);
-      reporter.addPolar( current);
       const v = current.getVValue();
       const observation = [v.x, v.y];
       currentEstimation = currentEstimator.filter({ previousCorrected: currentEstimation, observation });
@@ -396,7 +446,7 @@ module.exports = function (app) {
       const row = { min: 0, max: SI.fromKnots(options.maxSpeed), step: SI.fromKnots(options.speedStep) };
       const col = { min: -SI.fromDegrees(options.maxHeel), max: SI.fromDegrees(options.maxHeel), step: SI.fromDegrees(options.heelStep) };
       let table;
-      if ( false && enforceConsistancy(row, col) && !options.doStartFresh) {
+      if ( enforceConsistancy(row, col) && !options.doStartFresh) {
         table = CorrectionTable.fromJSON(options.correctionTable, options.correctionStability);
         app.debug("Correction table loaded");
         lastSave = new Date();
@@ -406,11 +456,94 @@ module.exports = function (app) {
         app.debug("Correction table created");
         options.doStartFresh = false;
         lastSave = saveTable(options, table);
-         app.debug(table.table.length);  
-        app.debug(table.table[0].length);
       }
       table.setDisplayAttributes("correctionTable", "Speed / Heel");
       return table;
+    }
+
+
+    function loadPresets() { 
+      const modeEnum = plugin.schema.properties.mode.enum;
+      app.debug("Loading presests for mode: " + options.mode);
+
+      switch (modeEnum.indexOf(options.mode)) {
+        case  -1: 
+          app.debug("Invalid mode");
+          app.debug(options);
+          //options.mode = modeEnum[2]; 
+          break;
+        case 0:
+          // new table, no current
+          options.doStartFresh = true;
+          options.updateCorrectionTable = true;
+          options.estimateBoatSpeed = false;
+          options.assumeCurrent = false;
+          options.estimateCurrent = false;
+          options.correctionStability = 5;
+          options.mode = modeEnum[2]; 
+          break;
+        case 1:
+          // new table, with current
+          options.doStartFresh = true;
+          options.updateCorrectionTable = true;
+          options.estimateBoatSpeed = false;
+          options.assumeCurrent = true;
+          options.estimateCurrent = false;
+          options.correctionStability = 5;
+          options.currentStability = 7;
+          options.mode = modeEnum[3]; 
+          break;
+        case 2:
+          // fresh table, no current
+          options.doStartFresh = false;
+          options.updateCorrectionTable = true;
+          options.estimateBoatSpeed = false;
+          options.assumeCurrent = false;
+          options.estimateCurrent = false;
+          options.correctionStability = 6;
+         break;
+        case 3:
+          // fresh table, with current
+          options.doStartFresh = false;
+          options.updateCorrectionTable = true;
+          options.estimateBoatSpeed = false;
+          options.assumeCurrent = true;
+          options.estimateCurrent = false;
+          options.correctionStability = 6;
+          options.currentStability = 6;
+          break;
+        case 4:
+          // mature table, no current
+          options.doStartFresh = false;
+          options.updateCorrectionTable = true;
+          options.estimateBoatSpeed = true;
+          options.assumeCurrent = false;
+          options.estimateCurrent = false;
+          options.correctionStability = 8;
+          break;
+        case 5:
+          // mature table, with current
+          options.doStartFresh = false;
+          options.updateCorrectionTable = true;
+          options.estimateBoatSpeed = true;
+          options.assumeCurrent = true;
+          options.estimateCurrent = true;
+          options.correctionStability = 8;
+          options.currentStability = 3;
+          break;
+        case 6:
+          // locked table
+          options.doStartFresh = false;
+          options.updateCorrectionTable = false;
+          options.estimateBoatSpeed = false;
+          options.assumeCurrent = true;
+          options.estimateCurrent = true;
+          options.currentStability = 2;
+          break;  
+        case 7:
+          // all manual configuration;
+          break;
+      }
     }
 
     // compare floats
@@ -424,28 +557,36 @@ module.exports = function (app) {
   }
 
 
-  plugin.stop = () => {
-    unsubscribes.forEach(f => f());
-    unsubscribes = [];
-    //corrTable.save(app);
-    if (corrTable != null) {
-      lastSave = saveTable(options, corrTable);
-    }
-    options = {};
-
-    residual = null;
-    heading = null;
-    attitude = null;
-    boatSpeed = null;
-    boatSpeedPolar = null;
-    correctedBoatSpeed = null;
-    groundSpeed = null;
-    current = null;
-    currentDelta = null;
-    speedCorrection = null;
-    reporter = null;
-    isRunning = false;
-    corrTable = null;
+    plugin.stop = () => {
+    return new Promise((resolve, reject) => {
+      try {
+        unsubscribes.forEach(f => f());
+        unsubscribes = [];
+        //corrTable.save(app);
+        if (corrTable != null) {
+          lastSave = saveTable(options, corrTable);
+        }
+        options = {};
+  
+        residual = null;
+        heading = null;
+        attitude = null;
+        boatSpeed = null;
+        boatSpeedPolar = null;
+        correctedBoatSpeed = null;
+        groundSpeed = null;
+        current = null;
+        currentDelta = null;
+        speedCorrection = null;
+        reporter = null;
+        isRunning = false;
+        corrTable = null;
+  
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    });
   };
   return plugin;
 };

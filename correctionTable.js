@@ -15,7 +15,6 @@ class CorrectionTable extends Table2D{
   }
 
   constructor(row, col, stability=5) {
-    console.log("CorrectionTable constructor");
     super(row, col, CorrectionEstimator, CorrectionEstimator.getFilterModel(stability));
     this.id = "correctionTable";
     this.label = "Correction Table";
@@ -74,9 +73,9 @@ class CorrectionEstimator {
    */
 
   static fromJSON(data, stability) {
-    const table = new Table2D(data.row, data.col, ClassType, data.parameters);
-    table.table = data.table.map(row => row.map(cellData => ClassType.fromJSON(cellData)));
-    return table;
+    const filterModel = CorrectionEstimator.getFilterModel(stability);
+    const estimator = new CorrectionEstimator(filterModel, data.state);
+    return estimator;
   }
 
   static getFilterModel(stability = 5) {
@@ -174,12 +173,6 @@ class CorrectionEstimator {
     return this.N != 0 ? { state: this.filterState } : { state: null };
   }
 
-  static fromJSON(data, stability) {
-    if (!data || data.state === undefined) {
-      return new CorrectionEstimator();
-    }
-    return new CorrectionEstimator(stability, data.state ?? null);
-  }
 }
 
 
