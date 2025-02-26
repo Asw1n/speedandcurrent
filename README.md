@@ -74,12 +74,12 @@ The graphical representation of the speed vectors, current vector, and correctio
 - A correction table stores speed errors for steps in speed and heel angle.
 - Each cell in the correction table contains a **Kalman filter** that updates speed corrections with new measurements.
 - The speed measurement is corrected by subtracting the correction from the correction table. The correction is **interpolated** based on nearby table cells, weighted by the uncertainty provided by the Kalman filter.
-- ![correction model](correctionModel.png)
+- ![correction model](https://github.com/Asw1n/speedandcurrent/raw/main/correctionModel.png)
 
 ### **2. Current Estimation Model**
 - The water current is estimated as a **slowly changing** vector.
 - A **Kalman filter** updates the current based on the difference between GPS speed and corrected speed.
-- ![current estimation model](currentModel.png)
+- ![current estimation model](https://github.com/Asw1n/speedandcurrent/raw/main/currentModel.png)
 
 ---
 
