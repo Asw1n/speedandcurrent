@@ -1,6 +1,6 @@
 {
   "name": "speedandcurrent",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "An experimental plugin that uses sensor fusion to get boat speed, current and leeway.",
   "main": "index.js",
   "scripts": {
