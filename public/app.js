@@ -1,5 +1,5 @@
 const API_BASE_URL = "/plugins/speedandcurrent"; // Adjust based on your server configuration
-import TableRenderer from './tableRenderer.js';
+import TableRenderer from './TableRenderer.js';
 
 
 let updateInterval = 1000;

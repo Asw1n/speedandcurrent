@@ -1,7 +1,7 @@
 {
   "name": "speedandcurrent",
-  "version": "1.0.1",
-  "description": "An experimental plugin that uses sensor fusion to get boat speed, current and leeway.",
+  "version": "1.1.0",
+  "description": "A plugin that automatically corrects boat speed and calculates current and leeway using sensor fusion.",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"

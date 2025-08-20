@@ -12,7 +12,7 @@ module.exports = function (app) {
   let isRunning = false;
   let corrTable = null;
   let lastSave = null;
-  var residual, heading, attitude, boatSpeed, boatSpeedPolar, correctedBoatSpeed, groundSpeed, current, currentDelta, speedCorrection, reporter;
+  var residual, heading, attitude, boatSpeed, boatSpeedPolar, correctedBoatSpeed, groundSpeed, current, speedCorrection, reporter;
 
 
   const plugin = {};
@@ -237,8 +237,7 @@ module.exports = function (app) {
     attitude.subscribe(app, plugin.id, unsubscribes);
  
     // current
-    currentDelta = new DeltaBase("environment.current");
-    current = new PolarDeltaBase();
+    current = new PolarDeltaBase("self.environment.current.drift","self.environment.current.setTrue");
     current.setDisplayAttributes("current", "ref_ground", "current");
 
     const currentStat = new PolarStat(current);
@@ -370,14 +369,8 @@ module.exports = function (app) {
 
 
       // Send calculated delta's
-      if (options.estimateCurrent) {
-        // translate current into signalK data structure
-        const c = current.getPValue();
-        const cc = { drift: current.speed, setTrue: current.angle, setMagnetic: (current.angle - variance.value + Math.PI) % (2 * Math.PI) - Math.PI };
-        currentDelta.setValue(cc);
-        DeltaBase.sendDeltas(app, plugin.id, [currentDelta]);
-      }
-      if (options.estimateBoatSpeed) PolarDeltaBase.sendDeltas(app, plugin.id, [correctedBoatSpeed]);
+      if (options.estimateCurrent) PolarDeltaBase.sendDeltas(app, plugin.id, [current]);
+        if (options.estimateBoatSpeed) PolarDeltaBase.sendDeltas(app, plugin.id, [correctedBoatSpeed]);
 
       // Save correction table 
       // periodically 
@@ -535,7 +528,7 @@ module.exports = function (app) {
           // locked table
           options.doStartFresh = false;
           options.updateCorrectionTable = false;
-          options.estimateBoatSpeed = false;
+          options.estimateBoatSpeed = true;
           options.assumeCurrent = true;
           options.estimateCurrent = true;
           options.currentStability = 2;
@@ -576,7 +569,6 @@ module.exports = function (app) {
         correctedBoatSpeed = null;
         groundSpeed = null;
         current = null;
-        currentDelta = null;
         speedCorrection = null;
         reporter = null;
         isRunning = false;
