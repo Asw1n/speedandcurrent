@@ -214,7 +214,8 @@ module.exports = function (app) {
 
 
   plugin.start = (opts) => {
-    app.debug("plugin started");
+    app.setPluginStatus("starting");
+    app.debug("plugin starting");
  
     // make options survive to the stop function
     options = opts;
@@ -225,7 +226,6 @@ module.exports = function (app) {
     
 
     // heading
-    // TBD: headingTrue or headingMagnetic
     heading = new DeltaSubscribe("navigation.headingTrue");
     heading.subscribe(app, plugin.id, unsubscribes);
     heading.setDisplayAttributes("heading","heading");
@@ -242,19 +242,18 @@ module.exports = function (app) {
 
     const currentStat = new PolarStat(current);
 
-    // magnetic variance 
-    variance = new DeltaSubscribe("navigation.magneticVariation");
-
+    
     // boat speed
     if (options.preventDuplication) {
       // DeltaCatch needed here 
       boatSpeed = new DeltaSubscribe("navigation.speedThroughWater");
-      boatSpeed.subscribe(app, plugin.id, unsubscribes, calculate);
+      boatSpeed.subscribe(app, plugin.id, unsubscribes);
     }
     else {
       boatSpeed = new DeltaSubscribe("navigation.speedThroughWater");
-      boatSpeed.subscribe(app, plugin.id, unsubscribes, calculate);
+      boatSpeed.subscribe(app, plugin.id, unsubscribes);
     }
+    boatSpeed.setDisplayAttributes("boatspeed", "Observed boat speed");
 
     boatSpeedPolar = new PolarDeltaBase("navigation.speedThroughWater", "environment.wind.directionTruenavigation.leewayAngle");
     boatSpeedPolar.setDisplayAttributes("boatSpeed", "ref_boat", "observed boat speed");
@@ -318,8 +317,22 @@ module.exports = function (app) {
     });
     let boatSpeedEstimation = null;
 
+    // determing slowest input path and use this as a heartbeat for calculations
+    app.debug("Determining slowest input for heartbeat");
+    let candidates = [boatSpeed, groundSpeed, attitude, heading];
+    // wait for all to settle
+    setTimeout(() => {
+      candidates.sort((a, b) => (a.frequency || 0) - (b.frequency || 0));
+      app.debug("Using " + candidates[0].label + " as heartbeat for calculations ( " + Math.round(candidates[0].frequency) + " updates per second)");
+      candidates[0].onUpdate = calculate;
+    }, 20000); 
+
+    
+
 
     isRunning = true;
+    app.setPluginStatus("Running");
+    app.debug("Running");
 
 
 
@@ -573,6 +586,8 @@ module.exports = function (app) {
         reporter = null;
         isRunning = false;
         corrTable = null;
+        app.setPluginStatus("Stopped");
+        app.debug("Stopped");
   
         resolve();
       } catch (error) {
