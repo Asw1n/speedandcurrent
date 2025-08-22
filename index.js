@@ -325,7 +325,7 @@ module.exports = function (app) {
       candidates.sort((a, b) => (a.frequency || 0) - (b.frequency || 0));
       app.debug("Using " + candidates[0].label + " as heartbeat for calculations ( " + Math.round(candidates[0].frequency) + " updates per second)");
       candidates[0].onUpdate = calculate;
-    }, 20000); 
+    }, 5000); 
 
     
 
