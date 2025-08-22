@@ -53,7 +53,7 @@ class CorrectionTable extends Table2D{
     if (totalWeightX == 0 || totalWeightY == 0) return { x: 0, y: 0 };  
     x = x / totalWeightX;
     y = y / totalWeightY;
-    return { x, y };
+    return { x:x, y:y };
 
   }
   
@@ -101,7 +101,7 @@ class CorrectionEstimator {
   }
   
   update(groundSpeed, current, boatSpeed, heading) {
-    if (groundSpeed.n < 2 || current.n < 2 || boatSpeed.n < 2) return;
+    if(groundSpeed.n < 2 || current.n < 2 || boatSpeed.n < 2)  return;
     // Rotation matrix for -theta
     const cosTheta = Math.cos(heading);
     const sinTheta = Math.sin(heading);
@@ -120,9 +120,9 @@ class CorrectionEstimator {
       ]
     );
 
-    var groundVector = rotateValue(groundSpeed.obs);
-    var currentVector = rotateValue(current.obs);
-    var boatVector = boatSpeed.obs;
+    var groundVector = rotateValue(groundSpeed.vector);
+    var currentVector = rotateValue(current.vector);
+    var boatVector = boatSpeed.vector;
 
     const observation = [
       -boatVector[0] + groundVector[0] - currentVector[0],

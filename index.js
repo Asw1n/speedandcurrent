@@ -1,4 +1,4 @@
-const {  PolarStat, DeltaStat, DeltaBase, DeltaSubscribe, PolarDeltaBase, PolarDeltaCatch, PolarDeltaSubscribe, SI, Reporter } = require('signalkutilities');
+const {  MessageHandler, Polar , PolarDamped, SI, Reporter } = require('signalkutilities');
 const { CorrectionTable } = require('./correctionTable.js');
 const { KalmanFilter } = require('kalman-filter');
 
@@ -12,8 +12,17 @@ module.exports = function (app) {
   let isRunning = false;
   let corrTable = null;
   let lastSave = null;
-  var residual, heading, attitude, boatSpeed, boatSpeedPolar, correctedBoatSpeed, groundSpeed, current, speedCorrection, reporter;
-
+  var heading = null;
+  var attitude = null; 
+  var current = null;
+  var boatSpeed = null;
+  var boatSpeedPolar = null; 
+  var correctedBoatSpeed = null;
+  var boatSpeedRefGround = null;
+  var groundSpeed = null;
+  var speedCorrection = null;
+  var residual = null;
+  
 
   const plugin = {};
   plugin.id = "SpeedAndCurrent";
@@ -226,96 +235,87 @@ module.exports = function (app) {
     
 
     // heading
-    heading = new DeltaSubscribe("navigation.headingTrue");
-    heading.subscribe(app, plugin.id, unsubscribes);
-    heading.setDisplayAttributes("heading","heading");
+    heading = new MessageHandler("navigation.headingTrue");
+    heading.subscribe(app, plugin.id);
+    heading.setDisplayAttributes({id:"heading",label:"heading"});
 
     //attitude
-    attitude = new DeltaSubscribe("navigation.attitude");
+    attitude = new MessageHandler("navigation.attitude");
     attitude.value = { pitch: 0, roll: 0, yaw: 0 }; //prevents errors when there is no attitude sensor
-    attitude.setDisplayAttributes("attitude","attitude");
-    attitude.subscribe(app, plugin.id, unsubscribes);
+    attitude.setDisplayAttributes({id:"attitude",label:"attitude"});
+    attitude.subscribe(app, plugin.id, false);
  
     // current
-    current = new PolarDeltaBase("self.environment.current.drift","self.environment.current.setTrue");
-    current.setDisplayAttributes("current", "ref_ground", "current");
-
-    const currentStat = new PolarStat(current);
+    current = new Polar("self.environment.current.drift","self.environment.current.setTrue");
+    current.setDisplayAttributes({id:"current", label:"current", plane:"North"});
+    const currentStat = new PolarDamped(current);
 
     
     // boat speed
-    if (options.preventDuplication) {
-      // DeltaCatch needed here 
-      boatSpeed = new DeltaSubscribe("navigation.speedThroughWater");
-      boatSpeed.subscribe(app, plugin.id, unsubscribes);
-    }
-    else {
-      boatSpeed = new DeltaSubscribe("navigation.speedThroughWater");
-      boatSpeed.subscribe(app, plugin.id, unsubscribes);
-    }
-    boatSpeed.setDisplayAttributes("boatspeed", "Observed boat speed");
+    boatSpeed = new Polar("navigation.speedThroughWater", "environment.wind.directionTruenavigation.leewayAngle");
+    boatSpeed.subscribe(app, plugin.id, true, false, !options.preventDuplication && options.estimateBoatSpeed);
+    boatSpeed.setDisplayAttributes({id:"boatSpeed", label:"boat speed", plane:"Boat"});
+    const boatSpeedStat = new PolarDamped(boatSpeed);
 
-    boatSpeedPolar = new PolarDeltaBase("navigation.speedThroughWater", "environment.wind.directionTruenavigation.leewayAngle");
-    boatSpeedPolar.setDisplayAttributes("boatSpeed", "ref_boat", "observed boat speed");
-    const boatSpeedStat = new PolarStat(boatSpeedPolar);
+    correctedBoatSpeed = new Polar("navigation.speedThroughWater", "environment.wind.directionTruenavigation.leewayAngle");
+    correctedBoatSpeed.setDisplayAttributes( {id:"correctedBoatSpeed", label:"corrected boat speed", plane:"Boat"});
+    const correctedBoatSpeedStat = new PolarDamped(correctedBoatSpeed);
 
-    correctedBoatSpeed = new PolarDeltaBase("navigation.speedThroughWater", "environment.wind.directionTruenavigation.leewayAngle");
-    correctedBoatSpeed.setDisplayAttributes("correctedSpeed", "ref_boat", "estimated boat Speed");
 
-    boatSpeedRefGround = new PolarDeltaBase();
-    boatSpeedRefGround.setDisplayAttributes("boatSpeedRefGround", "ref_ground","boat speed over ground");
+    boatSpeedRefGround = new Polar();
+    boatSpeedRefGround.setDisplayAttributes("boatSpeedRefGround", "boat speed over ground", "North");
 
 
     // ground speed
-    groundSpeed = new PolarDeltaSubscribe("navigation.speedOverGround", "navigation.courseOverGroundTrue");
-    groundSpeed.subscribe(app, plugin.id, unsubscribes);
-    groundSpeed.setDisplayAttributes("groundSpeed", "ref_ground", "observed speed over ground");
-    const groundSpeedStat = new PolarStat(groundSpeed);
+    groundSpeed = new Polar("navigation.speedOverGround", "navigation.courseOverGroundTrue");
+    groundSpeed.subscribe(app, plugin.id, true, true, false);
+    groundSpeed.setDisplayAttributes({id:"groundSpeed", label:"ground speed", plane:"North"});
+    const groundSpeedStat = new PolarDamped(groundSpeed);
 
     // correction vector
-    speedCorrection = new PolarDeltaBase();
-    speedCorrection.setDisplayAttributes("correction", "ref_boat", "correction");
+    speedCorrection = new Polar();
+    speedCorrection.setDisplayAttributes("speedCorrection", "speed correction", "Boat");
 
     // residual
-    residual = new PolarDeltaBase();
-    residual.setDisplayAttributes("residual", "ref_ground", "residual");
+    residual = new Polar();
+    residual.setDisplayAttributes({id:"residual", label:"residual", plane:"North"});
 
     // Make reporting object for webApp
-    reporter = new Reporter();
+    //reporter = new Reporter();
 
     // filter for current
-    stability = 10 ** (options.currentStability);
-    const currentEstimator = new KalmanFilter({
-      observation: {
-        stateProjection: [[1, 0], [0, 1]], // observation matrix H
-        covariance: [[1 , 0], [0, 1 ]], //measurement noise R
-        dimension: 2
-      },
-      dynamic: {
-        transition: [[1, 0], [0, 1]], // state transition matrix F
-        covariance: [1 / stability, 1 / stability],// process noise covariance matrix Q
-        init: {
-          mean: [[0], [0]],
-          covariance: [[1 / stability, 0], [0, 1 / stability]]
-        }
-      }
-    });
-    let currentEstimation = null;
+    // stability = 10 ** (options.currentStability);
+    // const currentEstimator = new KalmanFilter({
+    //   observation: {
+    //     stateProjection: [[1, 0], [0, 1]], // observation matrix H
+    //     covariance: [[1 , 0], [0, 1 ]], //measurement noise R
+    //     dimension: 2
+    //   },
+    //   dynamic: {
+    //     transition: [[1, 0], [0, 1]], // state transition matrix F
+    //     covariance: [1 / stability, 1 / stability],// process noise covariance matrix Q
+    //     init: {
+    //       mean: [[0], [0]],
+    //       covariance: [[1 / stability, 0], [0, 1 / stability]]
+    //     }
+    //   }
+    // });
+    // let currentEstimation = null;
 
     // filter for boat speed
-    stability = 10 ** (1);
-    const boatSpeedEstimator = new KalmanFilter({
-      observation: {
-        stateProjection: [[1, 0], [0, 1]], // observation matrix H
-        covariance: [[1 * stability, 0], [0, 1 * stability]], //measurement noise R
-        dimension: 2
-      },
-      dynamic: {
-        transition: [[1, 0], [0, 1]], // state transition matrix F
-        covariance: [1, 1],// process noise covariance matrix Q
-      }
-    });
-    let boatSpeedEstimation = null;
+    // stability = 10 ** (1);
+    // const boatSpeedEstimator = new KalmanFilter({
+    //   observation: {
+    //     stateProjection: [[1, 0], [0, 1]], // observation matrix H
+    //     covariance: [[1 * stability, 0], [0, 1 * stability]], //measurement noise R
+    //     dimension: 2
+    //   },
+    //   dynamic: {
+    //     transition: [[1, 0], [0, 1]], // state transition matrix F
+    //     covariance: [1, 1],// process noise covariance matrix Q
+    //   }
+    // });
+    // let boatSpeedEstimation = null;
 
     // determing slowest input path and use this as a heartbeat for calculations
     app.debug("Determining slowest input for heartbeat");
@@ -323,7 +323,7 @@ module.exports = function (app) {
     // wait for all to settle
     setTimeout(() => {
       candidates.sort((a, b) => (a.frequency || 0) - (b.frequency || 0));
-      app.debug("Using " + candidates[0].label + " as heartbeat for calculations ( " + Math.round(candidates[0].frequency) + " updates per second)");
+      app.debug("Using " + candidates[0].displayAttributes.label + " as heartbeat for calculations ( " + Math.round(candidates[0].frequency) + " updates per second)");
       candidates[0].onUpdate = calculate;
     }, 5000); 
 
@@ -337,14 +337,13 @@ module.exports = function (app) {
 
 
     // Main function, estimates boatSpeed, leeway and current
-    function calculate(timestamp) {
+    function calculate() {
       // prepare iteration
-      boatSpeedPolar.setVValue({ x: boatSpeed.value, y: 0 });
       groundSpeedStat.sample();
       currentStat.sample();
       boatSpeedStat.sample();
       heel = attitude.value.roll;
-      speed = boatSpeed.value;
+      speed = boatSpeed.magnitude;
       theta = heading.value;
       if (!Number.isFinite(heel)) {
         app.debug("Heel is not a valid number, skipping calculation");
@@ -358,18 +357,11 @@ module.exports = function (app) {
         app.debug("Heading is not a valid number, skipping calculation");
         return;
       }
-      reporter.newReport();
-      reporter.addOptions(options);
-      reporter.addPolar( groundSpeed);
-      reporter.addPolar( boatSpeedPolar);
-      reporter.addAttitude( attitude);
-      reporter.addDelta( heading);
 
       // update correction table
       if (options.updateCorrectionTable) {
         table.update(speed, heel, groundSpeedStat, currentStat, boatSpeedStat, theta);
       }
-      reporter.addTable(table, speed, heel);
 
       // correct and estimate boat speed
       estimateBoatSpeed();
@@ -382,9 +374,11 @@ module.exports = function (app) {
 
 
       // Send calculated delta's
-      if (options.estimateCurrent) PolarDeltaBase.sendDeltas(app, plugin.id, [current]);
-        if (options.estimateBoatSpeed) PolarDeltaBase.sendDeltas(app, plugin.id, [correctedBoatSpeed]);
-
+      updates = [];
+      if (options.estimateCurrent) updates.push(current);
+      if (options.estimateBoatSpeed) updates.push(correctedBoatSpeed);
+      if ( updates.length) Polar.send(app, plugin.id, updates);
+ 
       // Save correction table 
       // periodically 
       if (options.updateCorrectionTable && new Date() - lastSave > 5 * 60 * 1000) {
@@ -395,31 +389,17 @@ module.exports = function (app) {
     // estimates boat speed from observed boatSpeed and correction
     function estimateBoatSpeed() {
       cor = table.getKalmanCorrection(speed, heel);
-      // app.debug(cor);
-      correctedBoatSpeed.copyFrom(boatSpeedPolar);
-      speedCorrection.setVValue(cor);
-
-      reporter.addPolar(speedCorrection);
-      correctedBoatSpeed.add(speedCorrection);
-      const v = correctedBoatSpeed.getVValue();
-      const observation = [v.x, v.y];
-      boatSpeedEstimation = boatSpeedEstimator.filter({ previousCorrected: boatSpeedEstimation, observation });
-      correctedBoatSpeed.setKValue(boatSpeedEstimation);
-      reporter.addPolar(correctedBoatSpeed);
+      correctedBoatSpeed.copyFrom(boatSpeed);
+      speedCorrection.setVectorValue(cor);
+     correctedBoatSpeed.add(speedCorrection);
     }
 
     // estimates current from observed groundspeed and estimated boatspeed 
     function estimateCurrent() {
       boatSpeedRefGround.copyFrom(correctedBoatSpeed);
       boatSpeedRefGround.rotate(theta);
-      reporter.addPolar( boatSpeedRefGround);
       current.copyFrom(groundSpeed);
       current.substract(boatSpeedRefGround);
-      const v = current.getVValue();
-      const observation = [v.x, v.y];
-      currentEstimation = currentEstimator.filter({ previousCorrected: currentEstimation, observation });
-      current.setKValue(currentEstimation);
-      reporter.addPolar( current);
     }
 
     // Calculate what ground speed is observed that is not attributed to estimated boat speed or estimated current
@@ -429,7 +409,6 @@ module.exports = function (app) {
       boatSpeedRefGround.rotate(theta);
       residual.substract(boatSpeedRefGround);
       residual.substract(current);
-      reporter.addPolar(residual);
     }
 
     // Make sure the table matches the settings
@@ -463,7 +442,7 @@ module.exports = function (app) {
         options.doStartFresh = false;
         lastSave = saveTable(options, table);
       }
-      table.setDisplayAttributes("correctionTable", "Speed / Heel");
+      table.setDisplayAttributes({id:"correctionTable", label:"correction table"});
       return table;
     }
 
