@@ -1,0 +1,177 @@
+/* --- CSS Variables for Colors --- */
+:root {
+  /* Data type colors */
+  --polar-color: #0d47a1;           /* darker blue */
+  --delta-color: #1b5e20;           /* darker green */
+  --attitude-color: #b28704;        /* darker yellow/gold */
+  --table2d-color: #4e342e;         /* darker brown */
+
+  /* Instance colors */
+  --heading-color: #000000;         /* black */
+  --attitude-color-instance: #000000; /* black */
+  --current-color: #0d47a1;         /* darker blue */
+  --currentDamped-color: #0d47a1;   /* darker blue */
+  --boatSpeed-color: #388e3c;       /* darker green */
+  --boatSpeedDamped-color: #388e3c; /* darker green */
+  --correctedBoatSpeed-color: #27632a; /* even darker green */
+  --boatSpeedRefGround-color: #00575b; /* darker teal */
+  --groundSpeed-color: #5d4037;     /* darker brown */
+  --groundSpeedDamped-color: #5d4037; /* darker brown */
+  --speedCorrection-color: #ad1457; /* darker pink/red */
+  --residual-color: #6a1b9a;        /* darker purple */
+  --correctionTable-color: #4e342e; /* darker brown */
+}
+
+/* --- Data Type Classes --- */
+
+.data {
+  color: black;
+}
+
+/* --- Instance IDs for Specific Colors --- */
+#heading {
+  color: var(--heading-color);
+  stroke: var(--heading-color);
+}
+#attitude {
+  color: var(--attitude-color-instance);
+  stroke: var(--attitude-color-instance);
+}
+#current, #currentDamped {
+  color: var(--current-color);
+  stroke: var(--current-color);
+}
+#boatSpeed, #boatSpeedDamped {
+  color: var(--boatSpeed-color);
+  stroke: var(--boatSpeed-color);
+}
+#correctedBoatSpeed {
+  color: var(--correctedBoatSpeed-color);
+  stroke: var(--correctedBoatSpeed-color);
+}
+#boatSpeedRefGround {
+  color: var(--boatSpeedRefGround-color);
+  stroke: var(--boatSpeedRefGround-color);
+}
+#groundSpeed, #groundSpeedDamped {
+  color: var(--groundSpeed-color);
+  stroke: var(--groundSpeed-color);
+}
+#speedCorrection {
+  color: var(--speedCorrection-color);
+  stroke: var(--speedCorrection-color);
+}
+#residual {
+  color: var(--residual-color);
+  stroke: var(--residual-color);
+}
+#correctionTable {
+  color: var(--correctionTable-color);
+  stroke: var(--correctionTable-color);
+}
+
+/* --- Table and Cell Styling --- */
+table {
+  border-collapse: collapse;
+}
+th, td {
+  border: 1px solid black;
+  padding: 5px;
+}
+.TableCell {
+  width: 60px;
+  height: 60px;
+  text-align: center;
+  vertical-align: middle;
+  font-size: 11px;
+}
+.selectedCell {
+  color: #fff;
+  background-color: #1976d2;
+}
+.emptyCell {
+}
+
+/* --- SVG Styling --- */
+svg {
+  border: 1px solid #ccc;
+  height: auto;
+  aspect-ratio: 1 / 1;
+  svg {
+  width: 100vmin;
+  height: 100vmin;
+    }
+}
+line {
+  stroke-width: 2;
+}
+#hull, #mast {
+  stroke: purple;
+  stroke-width: 1;
+  stroke-linecap: round;
+}
+
+/* --- Menu and Layout --- */
+body {
+  font-family: Arial, sans-serif;
+  display: flex;
+  flex-direction: column;
+  margin: 15px 15px 15px 15px;
+}
+.menu-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  background: #6a6a6a;
+  color: black;
+  display: flex;
+  align-items: center;
+  padding: 10px 20px;
+  gap: 20px;
+  box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.2);
+  z-index: 1000;
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+.menu-item label {
+  font-size: 14px;
+  color: black;
+}
+.menu-item select {
+  background: transparent;
+  border: 1px solid #888;
+  color: black;
+  font-size: 14px;
+  appearance: none;
+  padding-right: 15px;
+  cursor: pointer;
+}
+.menu-item select::-ms-expand {
+  display: none;
+}
+#toggle-updates {
+  background: transparent;
+  border: 1px solid #888;
+  padding: 5px 15px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+#toggle-updates:hover {
+  background: #555;
+}
+.content {
+  margin-top: 60px;
+}
+.surfacePlot {
+  width: 100%;
+  height: 100%;
+  border: 1px solid black;
+  padding: 0;
+  margin: 0;
+  position: relative;
+}

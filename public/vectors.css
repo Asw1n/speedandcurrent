@@ -32,28 +32,31 @@ line {
   stroke-linecap: round;
 }
 
-#boatSpeed {
-  stroke: lightseagreen;
+/* Wind-related polars */
+.windPolar, #windApparent, #windTrue, #windGround {
+  stroke: #1976d2; /* blue */
 }
+#windApparent { stroke: #64b5f6; }   /* lighter blue */
+#windTrue     { stroke: #1976d2; }   /* main blue */
+#windGround   { stroke: #90caf9; }   /* lightest blue */
 
-#correction {
-  stroke: red;
+/* Ground-related polars */
+.groundPolar, #boatSpeedOverGround, #windSpeedOverGround {
+  stroke: #6d4c41; /* brown */
 }
+#boatSpeedOverGround { stroke: #a1887f; }
+#windSpeedOverGround { stroke: #bcaaa4; }
 
-
-#correctedSpeed {
-  stroke: seagreen;
+/* Boat-related polars */
+.boatPolar, #boatSpeed, #speedThroughWater {
+  stroke: #388e3c; /* green */
 }
+#boatSpeed        { stroke: #81c784; }
+#speedThroughWater{ stroke: #388e3c; }
 
-#residual {
-  stroke: rgb(250, 140, 158);
+/* Error/Correction polars */
+.correctionPolar, #correction, #residual {
+  stroke: #d32f2f; /* red */
 }
-
-#current {
-  stroke: rgb(52, 52, 255) ;
-}
-
-
-#groundSpeed {
-  stroke: brown;
-}
+#correction { stroke: #f06292; }
+#residual   { stroke: #ba68c8; }

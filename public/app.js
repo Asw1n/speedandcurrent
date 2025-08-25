@@ -40,7 +40,7 @@ export function handleAngleUnitChange(value) {
 
 
 export function handleTableStyleChange(value) {
-  console.log(value);
+  //console.log(value);
   if (value == "cartesian") {
     tableRenderer.setCellFormat(cartesian);
   }
@@ -112,7 +112,7 @@ async function getFromServer(endpoint) {
       if (response.status === 503) {
         document.getElementById("message").innerHTML = "Plugin is not running";
       } else {
-        document.getElementById("message").innerHTML = "Failed to fetch data";
+        document.getElementById("message").innerHTML = "Failed to fetch data. Error: " + response.status + " " + response.statusText;
       }
     }
     else {
@@ -158,15 +158,17 @@ function updatePolar(data) {
   stepsList.innerHTML = ''; // Clear previous steps
 
   const table = document.createElement('table');
+  table.classList.add('polar');
   const headerRow = document.createElement('tr');
   headerRow.innerHTML = '<th>Label</th><th>Speed</th><th>Angle</th>';
   table.appendChild(headerRow);
 
-  data.polarSteps.forEach(step => {
+  data.polars.forEach(polar => {
     const row = document.createElement('tr');
-    if (step.id != undefined)
-      row.classList.add(step.id);
-    row.innerHTML = `<td>${step.label}</td><td>${cSpeed(step.speed)}</td><td>${cAngle(step.angle)}</td>`;
+    if (polar.id) {
+      row.id = polar.id;
+    }
+    row.innerHTML = `<td>${polar.displayAttributes.label}</td><td>${cSpeed(polar.magnitude)}</td><td>${cAngle(polar.angle)}</td>`;
     table.appendChild(row);
   });
 
@@ -178,15 +180,17 @@ function updateDelta(data) {
   stepsList.innerHTML = ''; // Clear previous steps
 
   const table = document.createElement('table');
+  table.classList.add('delta');
   const headerRow = document.createElement('tr');
-  headerRow.innerHTML = '<th>Label</th><th>Delta</th>';
+  headerRow.innerHTML = '<th>Label</th><th>Value</th>';
   table.appendChild(headerRow);
 
-  data.deltas.forEach(step => {
+  data.deltas.forEach(delta => {
     const row = document.createElement('tr');
-    if (step.id != undefined)
-      row.classList.add(step.id);
-    row.innerHTML = `<td>${step.label}</td><td>${cAngle(step.value)}</td>`;
+    if (delta.id) {
+      row.id = delta.id;
+    }
+    row.innerHTML = `<td>${delta.displayAttributes.label}</td><td>${cAngle(delta.value)}</td>`;
     table.appendChild(row);
   });
 
@@ -197,16 +201,19 @@ function updateAttitude(data) {
   const attitudeContainer = document.getElementById('attitude-container');
   attitudeContainer.innerHTML = '';
   const table = document.createElement('table');
+  table.classList.add('attitude');
+
   const headerRow = document.createElement('tr');
-  headerRow.innerHTML = '<th>Label</th><th>roll</th><th>pitch</th>';
+  headerRow.innerHTML = '<th>Label</th><th>roll</th><th>pitch</th><th>yaw</th>';
   table.appendChild(headerRow);
 
 
-  data.attitudeSteps.forEach(step => {
+  data.attitudes.forEach(attitude => {
     const row = document.createElement('tr');
-    if (step.id != undefined)
-      row.classList.add(step.id);
-    row.innerHTML = `<td>${step.label}</td><td>${cAngle(step.roll)}</td><td>${cAngle(step.pitch)}</td>`;
+    if (attitude.id) {
+      row.id = attitude.id;
+    }
+    row.innerHTML = `<td>${attitude.displayAttributes.label}</td><td>${cAngle(attitude.value.roll)}</td><td>${cAngle(attitude.value.pitch)}</td><td>${cAngle(attitude.value.yaw)}</td>`;
     table.appendChild(row);
   });
   attitudeContainer.appendChild(table);
@@ -215,8 +222,11 @@ function updateAttitude(data) {
 function updateTable(data) {
   const tableContainer = document.getElementById('table-container');
   tableContainer.innerHTML = '';
-  const tableElement = tableRenderer.render(data.tables[0]);
-  tableContainer.appendChild(tableElement);
+    data.tables.forEach(table => {
+
+    const tableElement = tableRenderer.render(table);
+    tableContainer.appendChild(tableElement);
+  });
 }
 
 
@@ -226,7 +236,7 @@ async function fetchAndUpdateData() {
   const data = await getFromServer('getResults'); // Updated endpoint
   if (data) {
     //console.log(data);
-    updateOptions(data);
+    //updateOptions(data);
     updatePolar(data);
     updateAttitude(data);
     updateDelta(data);

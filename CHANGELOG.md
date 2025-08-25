@@ -16,3 +16,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Case error in filename that prevented the webapp from displaying the correction table
 - Corrected speed through water is now calculated when the correction table is fixed
 
+## [1.2.0] - ntb
+### Changed
+- Simplified code
+### Added
+- Smart heartbeat. Calculations will run after an update of the path that has the lowest update frequency
+### Fixed
+- Angles are now reported in the appropriate range, 0 to 2 * PI or -PI to PI, depending on path
+### To do
+- source specification in options 
+- current damping in options
+- testing
+- not having to be logged on

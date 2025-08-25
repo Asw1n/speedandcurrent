@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Speed and current</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="main.css">
 </head>
 
 <body>
@@ -53,26 +53,38 @@
   <!-- Content below the fixed menu -->
   <main class="content">
 
-    <section class="svg-section">
-      <object data="vectors.html" width="100%" height="500px" type="text/html"></object>
+    <section class="graph">
+      <svg height="300px" width="300px" xmlns="http://www.w3.org/2000/svg" viewbox="-100 -100 200 200" id="canvas">
+      
+        <!-- Draw the paths -->
+      
+      
+        <path id="hull" d="M -45 10  Q 15 25 30 0 Q 15 -25 -45 -10 z" stroke="black" fill="none" stroke-width="1"
+          transform="rotate(-90), scale(1, 1)" />
+      
+        <line id="mast" x1="0" y1="0" x2="1" y2="8" stroke="brown" stroke-width="2" transform="rotate(-90)" />
+      
+      
+        Sorry, your browser does not support inline SVG.
+      </svg>
     </section>
 
 
-    <section class="delta-section">
+    <section class=" data ">
       <h2>Deltas</h2>
       <div id="delta-container">
         <!-- Speeds table will be populated here -->
       </div>
     </section>
 
-    <section class="speeds-section">
+    <section class="data ">
       <h2>Vectors</h2>
       <div id="speeds-container">
-        <!-- Speeds table will be populated here -->
+        <!-- Vectors table will be populated here -->
       </div>
     </section>
 
-    <section class="attitude-section">
+    <section class="data ">
       <h2>Attitude</h2>
       <div id="attitude-container">
         <!-- attitude table will be populated here -->
@@ -80,7 +92,7 @@
     </section>
 
 
-    <section class="table-section">
+    <section class="data ">
       <h2>Correction table</h2>
       <div id="table-container">
         <!-- Steps table will be populated here -->
@@ -88,12 +100,7 @@
       
     </section>
 
-    <section class="options-section">
-      <h2>Plugin options</h2>
-      <div id="options-content">
-        <!-- Options table will be populated here -->
-      </div>
-    </section>
+
   </main>
 
 
@@ -102,6 +109,7 @@
 
 
   <script type="module" src="app.js"></script>
+  <script type="module" src="vectors.js"></script>
 </body>
 
 </html>

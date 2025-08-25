@@ -28,11 +28,13 @@ class TableRenderer {
   }
 
   render(data) {
-    const { row, col, table, selected, id, label } = data;
+    const {id, row, col, table, displayAttributes } = data;
     this.data = data;
-
+    const label = displayAttributes && displayAttributes.label ? displayAttributes.label : "";
+    
     // Create a table element
     const tableElement = document.createElement('table');
+  
     tableElement.id = id;
     tableElement.classList.add('Table2D');
     // create header row
@@ -41,7 +43,7 @@ class TableRenderer {
     // Create other rows 
     var rIndex = 0;
     for (let r = row.min; r <= row.max + 0.01; r += row.step) {
-      tableElement.appendChild(this.tableRow(r, rIndex, col, table, selected));
+      tableElement.appendChild(this.tableRow(r, rIndex, col, table));
       rIndex++;
     }
     return tableElement;
@@ -54,7 +56,7 @@ class TableRenderer {
     firstHeaderCell.innerText = label ? label : ''; 
     firstHeaderCell.classList.add('TableRowHeader');
     headerRow.appendChild(firstHeaderCell);
-
+  
     // Create header row 
     for (let c = col.min; c <= col.max + 0.01; c += col.step) {
       const headerCell = document.createElement('th');
@@ -73,7 +75,7 @@ class TableRenderer {
     return headerCell;
   }
 
-  tableRow(r, rIndex, col, table, selected) {
+  tableRow(r, rIndex, col, table) {
     var cIndex = 0;
     const rowElement = document.createElement('tr');
     rowElement.appendChild(this.rowLabel(r));
@@ -88,7 +90,7 @@ class TableRenderer {
       else {
       cell.classList.add('emptyCell');
       }
-      if (selected[0] == rIndex && selected[1] == cIndex) cell.classList.add('selectedCell');
+      if (value.displayAttributes && value.displayAttributes.selected) cell.classList.add('selectedCell');
 
       rowElement.appendChild(cell);
       cIndex++;

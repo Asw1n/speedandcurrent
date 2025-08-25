@@ -9,19 +9,20 @@ class CorrectionTable extends Table2D{
 
 
   static fromJSON(data, stability) {
-    const table = new CorrectionTable(data.row, data.col, stability);
+    const table = new CorrectionTable(data.id, data.row, data.col, stability);
     table.table = data.table.map(row => row.map(cellData => CorrectionEstimator.fromJSON(cellData)));
     return table;
   }
 
-  constructor(row, col, stability=5) {
-    super(row, col, CorrectionEstimator, CorrectionEstimator.getFilterModel(stability));
-    this.id = "correctionTable";
-    this.label = "Correction Table";
+  constructor(id, row, col, stability=5) {
+    super(id, row, col, CorrectionEstimator, CorrectionEstimator.getFilterModel(stability));
+    this.lastUpdatedCell = null;
   }
   
   update(speed, heel, groundSpeed, current, boatSpeed, heading) {
-    this.getCell(speed, heel)?.update(groundSpeed, current, boatSpeed, heading);
+    const cell = this.getCell(speed, heel);
+    cell?.update(groundSpeed, current, boatSpeed, heading);
+    this.lastUpdatedCell = cell;
   }
 
   getKalmanCorrection(speed, heel) {
@@ -57,11 +58,22 @@ class CorrectionTable extends Table2D{
 
   }
   
-  getInfo() {
+  report() {
     return {
+      id: this.id,
       row: { min: this.min[0], max: this.max[0], step: this.step[0] },
       col: { min: this.min[1], max: this.max[1], step: this.step[1] },
-      table: this.table.map(row => row.map(correction => correction.getInfo()))
+      table: this.table.map(row =>
+        row.map(correction => {
+          const cellReport = correction.report();
+          // Mark selected if this is the last updated cell
+          cellReport.displayAttributes = {
+            selected: correction === this.lastUpdatedCell
+          };
+          return cellReport;
+        })
+      ),
+      displayAttributes: this.displayAttributes 
     };
   }
 
@@ -145,7 +157,7 @@ class CorrectionEstimator {
   }
 
 
-  getInfo() {
+  report() {
     return { x: this.x, y: this.y, N: this.N };
   }
 
