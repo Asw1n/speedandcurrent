@@ -21,10 +21,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Simplified code
 ### Added
 - Smart heartbeat. Calculations will run after an update of the path that has the lowest update frequency
+- Option to set the source for inout paths
 ### Fixed
 - Angles are now reported in the appropriate range, 0 to 2 * PI or -PI to PI, depending on path
 ### To do
-- source specification in options 
-- current damping in options
 - testing
+- version numbering and dependencies
 - not having to be logged on

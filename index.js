@@ -1,4 +1,4 @@
-const {  MessageHandler, Polar , PolarDamped, SI, Reporter } = require('signalkutilities');
+const { MessageHandler, Polar, PolarDamped, SI, Reporter } = require('signalkutilities');
 const { CorrectionTable } = require('./correctionTable.js');
 const { KalmanFilter } = require('kalman-filter');
 
@@ -12,7 +12,7 @@ module.exports = function (app) {
   let corrTable = null;
   let lastSave = null;
   reportFullheading = null;
-  reportFullattitude = null; 
+  reportFullattitude = null;
   reportFullcurrent = null;
   reportFullcurrentStat = null;
   reportFullboatSpeed = null;
@@ -75,6 +75,42 @@ module.exports = function (app) {
         description: "Correction table maximum speed.",
         default: 9
       },
+
+      headingSource: {
+        type: "string",
+        title: "Heading Source",
+        description: "Source to use for navigation.heading (optional).",
+        default: " "
+      },
+
+      boatSpeedSource: {
+        type: "string",
+        title: "Boat Speed Source",
+        description: "Source to use for navigation.speedThroughWater (optional).",
+        default: " "
+      },
+
+      COGSource: {
+        type: "string",
+        title: "Course over ground",
+        description: "Source to use for navigation.courseOverGroundTrue (optional)",
+        default: " "
+      },
+
+      SOGSource: {
+        type: "string",
+        title: "Ground Speed Source",
+        description: "Source to use for navigation.speedOverGround (optional)",
+        default: " "
+      },
+
+      attitudeSource: {
+        type: "string",
+        title: "Attitude Source",
+        description: "Source to use for navigation.attitude (optional)",
+        default: " "
+      },
+
       preventDuplication: {
         type: "boolean",
         title: "Prevent duplication of boat speed",
@@ -131,10 +167,10 @@ module.exports = function (app) {
         maximum: 8
       }
     }
-  }; 
-  
-   plugin.uiSchema = {
-     'ui:order': ["mode", "maxSpeed", "speedStep", "maxHeel", "heelStep", "preventDuplication", "updateCorrectionTable", "estimateBoatSpeed", "correctionStability", "doStartFresh", "assumeCurrent", "estimateCurrent", "currentStability"],
+  };
+
+  plugin.uiSchema = {
+    'ui:order': ["mode", "maxSpeed", "speedStep", "maxHeel", "heelStep", "headingSource", "boatSpeedSource", "COGSource", "SOGSource", "attitudeSource", "preventDuplication", "updateCorrectionTable", "estimateBoatSpeed", "correctionStability", "doStartFresh", "assumeCurrent", "estimateCurrent", "currentStability"],
     doStartFresh: {
       "ui:widget": "hidden",
     },
@@ -153,7 +189,7 @@ module.exports = function (app) {
     mode: {
       "ui:widget": "select",
     },
-     updateCorrectionTable: {
+    updateCorrectionTable: {
       "ui:widget": "hidden",
     },
     estimateBoatSpeed: {
@@ -175,7 +211,7 @@ module.exports = function (app) {
       "ui:widget": "hidden",
     }
   };
- 
+
 
   plugin.registerWithRouter = function (router) {
     app.debug('registerWithRouter');
@@ -212,29 +248,29 @@ module.exports = function (app) {
   plugin.start = (opts) => {
     app.setPluginStatus("starting");
     app.debug("plugin starting");
- 
+
     // make options survive to the stop function
     options = opts;
     loadPresets();
 
     // correction table
     table = loadTable(options);
-    
+
 
     // heading
-    heading = new MessageHandler("heading", "navigation.headingTrue");
+    heading = new MessageHandler("heading", "navigation.headingTrue", options.headingSource);
     heading.subscribe(app, plugin.id, true);
-    heading.setDisplayAttributes({label:"heading"});
+    heading.setDisplayAttributes({ label: "heading" });
 
     // attitude
-    attitude = new MessageHandler("attitude", "navigation.attitude");
+    attitude = new MessageHandler("attitude", "navigation.attitude", options.attitudeSource);
     attitude.value = { pitch: 0, roll: 0, yaw: 0 }; //prevents errors when there is no attitude sensor
-    attitude.setDisplayAttributes({label:"attitude"});
+    attitude.setDisplayAttributes({ label: "attitude" });
     attitude.subscribe(app, plugin.id, true);
 
     // current
     current = new Polar("current", "self.environment.current.drift", "self.environment.current.setTrue");
-    current.setDisplayAttributes({label:"current", plane:"Ground"});
+    current.setDisplayAttributes({ label: "current", plane: "Ground" });
     current.setAngleRange('0to2pi');
     currentStat = new PolarDamped("currentDamped", current);
     currentStat.setAngleRange('0to2pi');
@@ -242,26 +278,26 @@ module.exports = function (app) {
     currentStat.timestamp = Date.now(); // Set initial timestamp to force initial current to be 0
 
     // boat speed
-    boatSpeed = new Polar("boatSpeed", "navigation.speedThroughWater", "environment.wind.directionTruenavigation.leewayAngle");
+    boatSpeed = new Polar("boatSpeed", "navigation.speedThroughWater", options.boatSpeedSource);
     boatSpeed.subscribe(app, plugin.id, true, false, !options.preventDuplication || !options.estimateBoatSpeed);
-    boatSpeed.setDisplayAttributes({label:"boat speed", plane:"Boat"});
+    boatSpeed.setDisplayAttributes({ label: "boat speed", plane: "Boat" });
     boatSpeedStat = new PolarDamped("boatSpeedDamped", boatSpeed);
-    boatSpeedStat.setDisplayAttributes({label:"boat speed (damped)", plane:"Boat"});
+    boatSpeedStat.setDisplayAttributes({ label: "boat speed (damped)", plane: "Boat" });
 
     correctedBoatSpeed = new Polar("correctedBoatSpeed", "navigation.speedThroughWater", "environment.wind.directionTruenavigation.leewayAngle");
-    correctedBoatSpeed.setDisplayAttributes({label:"corrected boat speed", plane:"Boat"});
+    correctedBoatSpeed.setDisplayAttributes({ label: "corrected boat speed", plane: "Boat" });
     //const correctedBoatSpeedStat = new PolarDamped("correctedBoatSpeedDamped", correctedBoatSpeed);
 
     boatSpeedRefGround = new Polar("boatSpeedRefGround");
     boatSpeedRefGround.setDisplayAttributes("boat speed over ground", "Ground");
 
     // ground speed
-    groundSpeed = new Polar("groundSpeed", "navigation.speedOverGround", "navigation.courseOverGroundTrue");
+    groundSpeed = new Polar("groundSpeed", "navigation.speedOverGround", "navigation.courseOverGroundTrue", options.SOGSource, options.COGSource);
     groundSpeed.subscribe(app, plugin.id, true, true, true);
-    groundSpeed.setDisplayAttributes({label:"ground speed", plane:"Ground"});
-      groundSpeed.setAngleRange('0to2pi');
+    groundSpeed.setDisplayAttributes({ label: "ground speed", plane: "Ground" });
+    groundSpeed.setAngleRange('0to2pi');
     groundSpeedStat = new PolarDamped("groundSpeedDamped", groundSpeed);
-    groundSpeedStat.setDisplayAttributes({label:"ground speed (damped)", plane:"Ground"});
+    groundSpeedStat.setDisplayAttributes({ label: "ground speed (damped)", plane: "Ground" });
     groundSpeedStat.setAngleRange('0to2pi');
 
     // correction vector
@@ -271,7 +307,7 @@ module.exports = function (app) {
 
     // residual
     residual = new Polar("residual");
-    residual.setDisplayAttributes({label:"residual", plane:"Ground"});
+    residual.setDisplayAttributes({ label: "residual", plane: "Ground" });
 
     // Make reporting object for webApp
     reportFull = new Reporter();
@@ -295,21 +331,33 @@ module.exports = function (app) {
     reportVector.addPolar(correctedBoatSpeed);
     reportVector.addPolar(boatSpeed);
     reportVector.addPolar(groundSpeed);
-    
 
 
-    // determing slowest input path and use this as a heartbeat for calculations
-    app.debug("Determining slowest input for heartbeat");
-    let candidates = [boatSpeed, groundSpeed, attitude, heading];
+
+    app.debug("Analyzing input data");
+    let candidates = [heading, attitude, boatSpeed, groundSpeed];
     // wait for all to settle
     setTimeout(() => {
+      //app.debug(groundSpeed.magnitudeHandler);
+      //app.debug(groundSpeed.angleHandler);
+      // Check if all candidates get input data
+      candidates.forEach(candidate => {
+        if (candidate.lackingInputData()) {
+          app.setPluginStatus("Halted: insufficient input data");
+          app.debug("Insufficient input data for " + candidate.displayAttributes.label  );
+          return;
+        }
+      });
+
+      // determing slowest input path and use this as a heartbeat for calculations
       candidates.sort((a, b) => (a.frequency || 0) - (b.frequency || 0));
-      app.debug("Using " + candidates[0].displayAttributes.label + " as heartbeat for calculations ( " + Math.round(candidates[0].frequency) + " updates per second)");
-      candidates[0].onChange = calculate;
-    }, 5000); 
 
-    
+      if (!candidates[0].lackingInputData()) {
+        app.debug("Using " + candidates[0].displayAttributes.label + " as heartbeat for calculations ( " + Math.round(candidates[0].frequency) + " updates per second)");
+        candidates[0].onChange = calculate;
+      }
 
+    }, 5000);
 
     isRunning = true;
     app.setPluginStatus("Running");
@@ -358,8 +406,8 @@ module.exports = function (app) {
       updates = [];
       if (options.estimateCurrent) updates.push(current);
       if (options.estimateBoatSpeed) updates.push(correctedBoatSpeed);
-      if ( updates.length) Polar.send(app, plugin.id, updates);
- 
+      if (updates.length) Polar.send(app, plugin.id, updates);
+
       // Save correction table 
       // periodically 
       if (options.updateCorrectionTable && new Date() - lastSave > 5 * 60 * 1000) {
@@ -372,7 +420,7 @@ module.exports = function (app) {
       cor = table.getKalmanCorrection(speed, heel);
       correctedBoatSpeed.copyFrom(boatSpeed);
       speedCorrection.setVectorValue(cor);
-     correctedBoatSpeed.add(speedCorrection);
+      correctedBoatSpeed.add(speedCorrection);
     }
 
     // estimates current from observed groundspeed and estimated boatspeed 
@@ -395,7 +443,7 @@ module.exports = function (app) {
     }
 
     // Make sure the table matches the settings
-    function enforceConsistancy(row, col ) {
+    function enforceConsistancy(row, col) {
       // function is bugged due to IS units vs knots and degrees
       if (!options?.correctionTable) return false;
       table = options.correctionTable;
@@ -414,7 +462,7 @@ module.exports = function (app) {
       const row = { min: 0, max: SI.fromKnots(options.maxSpeed), step: SI.fromKnots(options.speedStep) };
       const col = { min: -SI.fromDegrees(options.maxHeel), max: SI.fromDegrees(options.maxHeel), step: SI.fromDegrees(options.heelStep) };
       let table;
-      if ( enforceConsistancy(row, col) && !options.doStartFresh) {
+      if (enforceConsistancy(row, col) && !options.doStartFresh) {
         table = CorrectionTable.fromJSON(options.correctionTable, options.correctionStability);
         app.debug("Correction table loaded");
         lastSave = new Date();
@@ -425,17 +473,17 @@ module.exports = function (app) {
         options.doStartFresh = false;
         lastSave = saveTable(options, table);
       }
-      table.setDisplayAttributes({label:"correction table"});
+      table.setDisplayAttributes({ label: "correction table" });
       return table;
     }
 
 
-    function loadPresets() { 
+    function loadPresets() {
       const modeEnum = plugin.schema.properties.mode.enum;
       app.debug("Loading presests for mode: " + options.mode);
 
       switch (modeEnum.indexOf(options.mode)) {
-        case  -1: 
+        case -1:
           app.debug("Invalid mode");
           app.debug(options);
           //options.mode = modeEnum[2]; 
@@ -448,7 +496,7 @@ module.exports = function (app) {
           options.assumeCurrent = false;
           options.estimateCurrent = false;
           options.correctionStability = 5;
-          options.mode = modeEnum[2]; 
+          options.mode = modeEnum[2];
           break;
         case 1:
           // new table, with current
@@ -459,7 +507,7 @@ module.exports = function (app) {
           options.estimateCurrent = false;
           options.correctionStability = 5;
           options.currentStability = 7;
-          options.mode = modeEnum[3]; 
+          options.mode = modeEnum[3];
           break;
         case 2:
           // fresh table, no current
@@ -469,7 +517,7 @@ module.exports = function (app) {
           options.assumeCurrent = false;
           options.estimateCurrent = false;
           options.correctionStability = 6;
-         break;
+          break;
         case 3:
           // fresh table, with current
           options.doStartFresh = false;
@@ -507,7 +555,7 @@ module.exports = function (app) {
           options.assumeCurrent = true;
           options.estimateCurrent = true;
           options.currentStability = 2;
-          break;  
+          break;
         case 7:
           // all manual configuration;
           break;
@@ -525,14 +573,14 @@ module.exports = function (app) {
   }
 
 
-    plugin.stop = () => {
+  plugin.stop = () => {
     return new Promise((resolve, reject) => {
       try {
         //corrTable.save(app);
         if (corrTable != null) {
           lastSave = saveTable(options, corrTable);
         }
-  
+
         heading = null;
         attitude = null;
         current = null;
@@ -548,9 +596,9 @@ module.exports = function (app) {
         reportFull = null;
         reportVector = null;
         table =
-        app.setPluginStatus("Stopped");
+          app.setPluginStatus("Stopped");
         app.debug("Stopped");
-  
+
         isRunning = false;
         resolve();
       } catch (error) {
