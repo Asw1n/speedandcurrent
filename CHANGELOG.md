@@ -18,13 +18,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [1.2.0] - ntb
 ### Changed
-- Simplified code
+- Simplified code, less CPU usage
 ### Added
-- Smart heartbeat. Calculations will run after an update of the path that has the lowest update frequency
-- Option to set the source for inout paths
+- Smart heartbeat. Calculations will run right after an update of the path that has the lowest update frequency
+- Option to set the source for input paths
+- Oversampling for quick update inputs to get better variance
 ### Fixed
 - Angles are now reported in the appropriate range, 0 to 2 * PI or -PI to PI, depending on path
 ### To do
 - testing
 - version numbering and dependencies
-- not having to be logged on
+- correct for not updating table when current = 0;

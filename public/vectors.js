@@ -126,9 +126,7 @@ async function fetchVectorData() {
           throw new Error(`Error fetching data: ${response.statusText}`);
         }
       }
-      else {
-        document.getElementById("message").innerHTML = "";
-      }
+      
 
       const data = await response.json();
       return data;
@@ -140,11 +138,7 @@ async function fetchVectorData() {
 }
 
 function handleError(error) {
-  document.getElementById("message").innerHTML = `
-      <div>
-        <p>${error}</p>
-      </div>
-    `;
+  console.log('Error:', error.message);
 }
 
 

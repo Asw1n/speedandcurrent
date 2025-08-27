@@ -275,7 +275,11 @@ module.exports = function (app) {
     currentStat = new PolarDamped("currentDamped", current);
     currentStat.setAngleRange('0to2pi');
     currentStat.timeConstant = 60; // Set time constant for damping
-    currentStat.timestamp = Date.now(); // Set initial timestamp to force initial current to be 0
+    // Current should be initialised as no current
+    current.setVectorValue({ x: 0, y: 0 });
+    // There should be at least two samples, otherwise we can't calculate a valid speed
+    currentStat.sample();
+    currentStat.sample();
 
     // boat speed
     boatSpeed = new Polar("boatSpeed", "navigation.speedThroughWater", options.boatSpeedSource);
@@ -352,25 +356,49 @@ module.exports = function (app) {
       // determing slowest input path and use this as a heartbeat for calculations
       candidates.sort((a, b) => (a.frequency || 0) - (b.frequency || 0));
 
+     
+
       if (!candidates[0].lackingInputData()) {
-        app.debug("Using " + candidates[0].displayAttributes.label + " as heartbeat for calculations ( " + Math.round(candidates[0].frequency) + " updates per second)");
-        candidates[0].onChange = calculate;
+        slowestInput = candidates[0];
+        app.debug("Using " + slowestInput.displayAttributes.label + " as heartbeat for calculations ( " + Math.round(candidates[0].frequency) + " updates per second)");
+        slowestInput.onChange = calculate;
+        if (slowestInput == groundSpeed) {
+          groundSpeed.onChange = () => {
+            groundSpeedStat.sample();
+            calculate();
+          };
+        }
+        else {
+          groundSpeed.onChange = () => {
+            groundSpeedStat.sample();
+          };
+        }
+        if (slowestInput == boatSpeed) {
+          boatSpeed.onChange = () => {
+            boatSpeedStat.sample();
+            calculate();
+          };
+        }
+        else {
+          boatSpeed.onChange = () => {
+            boatSpeedStat.sample();
+          };
+        }
+        
+        isRunning = true;
+        app.setPluginStatus("Running");
+        app.debug("Running");  
       }
 
     }, 5000);
 
-    isRunning = true;
-    app.setPluginStatus("Running");
-    app.debug("Running");
+    
 
 
 
     // Main function, estimates boatSpeed, leeway and current
     function calculate() {
       // prepare iteration
-      groundSpeedStat.sample();
-      //currentStat.sample();
-      boatSpeedStat.sample();
       heel = attitude.value.roll;
       speed = boatSpeed.magnitude;
       theta = heading.value;
