@@ -11,21 +11,21 @@ module.exports = function (app) {
   let isRunning = false;
   let corrTable = null;
   let lastSave = null;
-  reportFullheading = null;
-  reportFullattitude = null;
-  reportFullcurrent = null;
-  reportFullcurrentStat = null;
-  reportFullboatSpeed = null;
-  reportFullboatSpeedStat = null;
-  reportFullcorrectedBoatSpeed = null;
-  reportFullboatSpeedRefGround = null;
-  reportFullgroundSpeed = null;
-  reportFullgroundSpeedStat = null;
-  reportFullspeedCorrection = null;
-  reportFullresidual = null;
-  reportFullreportFull = null;
-  var reportVector = null;
-  var table = null;
+  let heading = null;
+  let attitude = null;
+  let current = null;
+  let currentStat = null;
+  let boatSpeed = null;
+  let boatSpeedStat = null;
+  let correctedBoatSpeed = null;
+  let boatSpeedRefGround = null;
+  let groundSpeed = null;
+  let groundSpeedStat = null;
+  let speedCorrection = null;
+  let residual = null;
+  let reportFull = null;
+  let reportVector = null;
+  let table = null;
 
   const plugin = {};
   plugin.id = "SpeedAndCurrent";
@@ -248,6 +248,7 @@ module.exports = function (app) {
   plugin.start = (opts) => {
     app.setPluginStatus("starting");
     app.debug("plugin starting");
+    let outputs = [];
 
     // make options survive to the stop function
     options = opts;
@@ -261,20 +262,28 @@ module.exports = function (app) {
     heading = new MessageHandler("heading", "navigation.headingTrue", options.headingSource);
     heading.subscribe(app, plugin.id, true);
     heading.setDisplayAttributes({ label: "heading" });
+    headingStat = new PolarDamped("headingDamped", heading, 1);
+    heading.onChange = () => {
+      headingStat.sample();
+    };
 
     // attitude
     attitude = new MessageHandler("attitude", "navigation.attitude", options.attitudeSource);
     attitude.value = { pitch: 0, roll: 0, yaw: 0 }; //prevents errors when there is no attitude sensor
     attitude.setDisplayAttributes({ label: "attitude" });
     attitude.subscribe(app, plugin.id, true);
+    attitudeStat = new PolarDamped("attitudeDamped", attitude, 1);
+    attitude.onChange = () => {
+      attitudeStat.sample();
+    };
 
     // current
     current = new Polar("current", "self.environment.current.drift", "self.environment.current.setTrue");
     current.setDisplayAttributes({ label: "current", plane: "Ground" });
     current.setAngleRange('0to2pi');
-    currentStat = new PolarDamped("currentDamped", current);
+    currentStat = new PolarDamped("currentDamped", current, 1);
     currentStat.setAngleRange('0to2pi');
-    currentStat.timeConstant = 60; // Set time constant for damping
+    outputs.push(current);
     // Current should be initialised as no current
     current.setVectorValue({ x: 0, y: 0 });
     // There should be at least two samples, otherwise we can't calculate a valid speed
@@ -285,12 +294,18 @@ module.exports = function (app) {
     boatSpeed = new Polar("boatSpeed", "navigation.speedThroughWater", options.boatSpeedSource);
     boatSpeed.subscribe(app, plugin.id, true, false, !options.preventDuplication || !options.estimateBoatSpeed);
     boatSpeed.setDisplayAttributes({ label: "boat speed", plane: "Boat" });
-    boatSpeedStat = new PolarDamped("boatSpeedDamped", boatSpeed);
+    boatSpeedStat = new PolarDamped("boatSpeedDamped", boatSpeed, 1);
     boatSpeedStat.setDisplayAttributes({ label: "boat speed (damped)", plane: "Boat" });
+    boatSpeed.onChange = () => {
+      boatSpeedStat.sample();
+    };
 
-    correctedBoatSpeed = new Polar("correctedBoatSpeed", "navigation.speedThroughWater", "environment.wind.directionTruenavigation.leewayAngle");
+    correctedBoatSpeed = new Polar("correctedBoatSpeed", "navigation.speedThroughWater", "navigation.leewayAngle");
     correctedBoatSpeed.setDisplayAttributes({ label: "corrected boat speed", plane: "Boat" });
+    outputs.push(correctedBoatSpeed);
     //const correctedBoatSpeedStat = new PolarDamped("correctedBoatSpeedDamped", correctedBoatSpeed);
+
+    // TODO: Add navigation.speedThroughWaterTransverse and navigation.speedThroughWaterLongitudinal
 
     boatSpeedRefGround = new Polar("boatSpeedRefGround");
     boatSpeedRefGround.setDisplayAttributes("boat speed over ground", "Ground");
@@ -300,9 +315,12 @@ module.exports = function (app) {
     groundSpeed.subscribe(app, plugin.id, true, true, true);
     groundSpeed.setDisplayAttributes({ label: "ground speed", plane: "Ground" });
     groundSpeed.setAngleRange('0to2pi');
-    groundSpeedStat = new PolarDamped("groundSpeedDamped", groundSpeed);
+    groundSpeedStat = new PolarDamped("groundSpeedDamped", groundSpeed, 1);
     groundSpeedStat.setDisplayAttributes({ label: "ground speed (damped)", plane: "Ground" });
     groundSpeedStat.setAngleRange('0to2pi');
+    groundSpeed.onChange = () => {
+      groundSpeedStat.sample();
+    };
 
     // correction vector
     speedCorrection = new Polar("speedCorrection");
@@ -336,63 +354,19 @@ module.exports = function (app) {
     reportVector.addPolar(boatSpeed);
     reportVector.addPolar(groundSpeed);
 
+    boatSpeed.onChange = () => {
+      boatSpeedStat.sample();
+      calculate();
+    };
 
 
-    app.debug("Analyzing input data");
-    let candidates = [heading, attitude, boatSpeed, groundSpeed];
-    // wait for all to settle
-    setTimeout(() => {
-      //app.debug(groundSpeed.magnitudeHandler);
-      //app.debug(groundSpeed.angleHandler);
-      // Check if all candidates get input data
-      candidates.forEach(candidate => {
-        if (candidate.lackingInputData()) {
-          app.setPluginStatus("Halted: insufficient input data");
-          app.debug("Insufficient input data for " + candidate.displayAttributes.label  );
-          return;
-        }
-      });
 
-      // determing slowest input path and use this as a heartbeat for calculations
-      candidates.sort((a, b) => (a.frequency || 0) - (b.frequency || 0));
+    isRunning = true;
+    app.setPluginStatus("Running");
+    app.debug("Running");
 
-     
 
-      if (!candidates[0].lackingInputData()) {
-        slowestInput = candidates[0];
-        app.debug("Using " + slowestInput.displayAttributes.label + " as heartbeat for calculations ( " + Math.round(candidates[0].frequency) + " updates per second)");
-        slowestInput.onChange = calculate;
-        if (slowestInput == groundSpeed) {
-          groundSpeed.onChange = () => {
-            groundSpeedStat.sample();
-            calculate();
-          };
-        }
-        else {
-          groundSpeed.onChange = () => {
-            groundSpeedStat.sample();
-          };
-        }
-        if (slowestInput == boatSpeed) {
-          boatSpeed.onChange = () => {
-            boatSpeedStat.sample();
-            calculate();
-          };
-        }
-        else {
-          boatSpeed.onChange = () => {
-            boatSpeedStat.sample();
-          };
-        }
-        
-        isRunning = true;
-        app.setPluginStatus("Running");
-        app.debug("Running");  
-      }
 
-    }, 5000);
-
-    
 
 
 
@@ -609,22 +583,22 @@ module.exports = function (app) {
           lastSave = saveTable(options, corrTable);
         }
 
-        heading = null;
-        attitude = null;
-        current = null;
+        heading = heading?.terminate(app);
+        attitude = attitude?.terminate(app);
+        current = current?.terminate(app);
         currentStat = null;
-        boatSpeed = null;
+        boatSpeed = boatSpeed?.terminate(app);
         boatSpeedStat = null;
-        correctedBoatSpeed = null;
-        boatSpeedRefGround = null;
-        groundSpeed = null;
+        correctedBoatSpeed = correctedBoatSpeed?.terminate(app);
+        boatSpeedRefGround = boatSpeedRefGround?.terminate(app);
+        groundSpeed = groundSpeed?.terminate(app);
         groundSpeedStat = null;
-        speedCorrection = null;
-        residual = null;
+        speedCorrection = speedCorrection?.terminate(app);
+        residual = residual?.terminate(app);
         reportFull = null;
         reportVector = null;
-        table =
-          app.setPluginStatus("Stopped");
+        table = null;
+        app.setPluginStatus("Stopped");
         app.debug("Stopped");
 
         isRunning = false;
