@@ -537,7 +537,7 @@ module.exports = function (app) {
           options.estimateBoatSpeed = true;
           options.assumeCurrent = false;
           options.estimateCurrent = false;
-          options.correctionStability = 8;
+          options.correctionStability = 10;
           break;
         case 5:
           // mature table, with current
@@ -546,7 +546,7 @@ module.exports = function (app) {
           options.estimateBoatSpeed = true;
           options.assumeCurrent = true;
           options.estimateCurrent = true;
-          options.correctionStability = 8;
+          options.correctionStability = 10;
           options.currentStability = 3;
           break;
         case 6:
