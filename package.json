@@ -29,6 +29,6 @@
   },
   "dependencies": {
     "kalman-filter": "^2.3.0",
-    "signalkutilities": "^1.3.0"
+    "signalkutilities": "^1.4.0"
   }
 }
