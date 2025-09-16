@@ -28,6 +28,10 @@
   color: black;
 }
 
+.unstable {
+  background: rgb(172, 172, 172);
+}
+
 /* --- Instance IDs for Specific Colors --- */
 #heading {
   color: var(--heading-color);

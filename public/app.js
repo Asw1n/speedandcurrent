@@ -168,6 +168,10 @@ function updatePolar(data) {
     if (polar.id) {
       row.id = polar.id;
     }
+    console.log(polar);
+    if (polar.displayAttributes.unstable) {
+      row.classList.add('unstable');
+    } 
     row.innerHTML = `<td>${polar.displayAttributes.label}</td><td>${cSpeed(polar.magnitude)}</td><td>${cAngle(polar.angle)}</td>`;
     table.appendChild(row);
   });
@@ -189,6 +193,9 @@ function updateDelta(data) {
     const row = document.createElement('tr');
     if (delta.id) {
       row.id = delta.id;
+    }
+    if (delta.displayAttributes.unstable) {
+      row.classList.add('unstable');
     }
     row.innerHTML = `<td>${delta.displayAttributes.label}</td><td>${cAngle(delta.value)}</td>`;
     table.appendChild(row);
@@ -212,6 +219,9 @@ function updateAttitude(data) {
     const row = document.createElement('tr');
     if (attitude.id) {
       row.id = attitude.id;
+    }
+    if (attitude.displayAttributes.unstable) {
+      row.classList.add('unstable');
     }
     row.innerHTML = `<td>${attitude.displayAttributes.label}</td><td>${cAngle(attitude.value.roll)}</td><td>${cAngle(attitude.value.pitch)}</td><td>${cAngle(attitude.value.yaw)}</td>`;
     table.appendChild(row);
