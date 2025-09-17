@@ -30,7 +30,7 @@ module.exports = function (app) {
   const plugin = {};
   plugin.id = "SpeedAndCurrent";
   plugin.name = "Speed and current";
-  plugin.description = "An experimental plugin that uses sensor fusion to get boat speed, current and leeway.";
+  plugin.description = "A plugin that uses sensor fusion to get boat speed, current and leeway.";
 
 
 
@@ -41,15 +41,17 @@ module.exports = function (app) {
         type: "string",
         title: "Plugin mode",
         description: "The mode of the plugin.",
-        enum: ["Start with new correction table, no current",
+        enum: [
+          "Start with new correction table, no current",
           "Start with new correction table, with current",
           "Fresh correction table, no current",
           "Fresh correction table, with current",
           "Mature correction table, no current",
           "Mature correction table, with current",
           "Locked correction table",
-          "Manual configuration"],
-        default: "Start with new correction table, no current",
+          "Manual configuration"
+        ],
+        default: "Start with new correction table, no current"
       },
       heelStep: {
         type: "number",
@@ -75,140 +77,64 @@ module.exports = function (app) {
         description: "Correction table maximum speed.",
         default: 9
       },
-
       headingSource: {
         type: "string",
         title: "Heading Source",
         description: "Source to use for navigation.heading (optional).",
         default: " "
       },
-
       boatSpeedSource: {
         type: "string",
         title: "Boat Speed Source",
         description: "Source to use for navigation.speedThroughWater (optional).",
         default: " "
       },
-
       COGSource: {
         type: "string",
         title: "Course over ground",
         description: "Source to use for navigation.courseOverGroundTrue (optional)",
         default: " "
       },
-
       SOGSource: {
         type: "string",
         title: "Ground Speed Source",
         description: "Source to use for navigation.speedOverGround (optional)",
         default: " "
       },
-
       attitudeSource: {
         type: "string",
         title: "Attitude Source",
         description: "Source to use for navigation.attitude (optional)",
         default: " "
       },
-
       preventDuplication: {
         type: "boolean",
         title: "Prevent duplication of boat speed",
         description: "Overwrite boat speed from sensor with corrected boat speed.",
-        default: true,
-      },
-
-      updateCorrectionTable: {
-        type: "boolean",
-        title: "Update correction table",
-        description: "Update estimations in the correction table.",
-        default: true,
-      },
-      estimateBoatSpeed: {
-        type: "boolean",
-        title: "Correct boat speed",
-        description: "Correct boat speed using correction table. This includes adding leeway.",
-        default: true,
-      },
-      correctionStability: {
-        type: "number",
-        title: "Stability of correction estimation",
-        description: `The stability of the correction estimation indicates how much the estimation is trusted 
-        opposed to the calculation of . Biggeboat speed. Bigger values give more trust to the estimation and more stable estimations`,
-        default: 7,
-        minimum: 5,
-        maximum: 12
-      },
-      doStartFresh: {
-        type: "boolean",
-        title: "Empty correction table",
-        description: "Restart with a fresh correction table. WARNING: all current corrections will be lost permanently!",
-        default: false
-      },
-      assumeCurrent: {
-        type: "boolean",
-        title: "assume current",
-        description: "The estimator assumes that there is current.",
-        default: false,
-      },
-      estimateCurrent: {
-        type: "boolean",
-        title: "Estimate current",
-        description: "Estimate water current.",
-        default: true,
-      },
-      currentStability: {
-        type: "number",
-        title: "Stability of current estimation ",
-        description: `The stability of the current estimation indicates how much the estimation is trusted 
-        opposed to the calculation of current. Bigger values give more trust to the estimation and more sable estimations`,
-        default: 5,
-        minimum: 1,
-        maximum: 8
+        default: true
       }
     }
   };
 
   plugin.uiSchema = {
-    'ui:order': ["mode", "maxSpeed", "speedStep", "maxHeel", "heelStep", "headingSource", "boatSpeedSource", "COGSource", "SOGSource", "attitudeSource", "preventDuplication", "updateCorrectionTable", "estimateBoatSpeed", "correctionStability", "doStartFresh", "assumeCurrent", "estimateCurrent", "currentStability"],
-    doStartFresh: {
-      "ui:widget": "hidden",
-    },
+    'ui:order': ["mode", "maxSpeed", "speedStep", "maxHeel", "heelStep", "headingSource", "boatSpeedSource", "COGSource", "SOGSource", "attitudeSource", "preventDuplication"],
     heelStep: {
-      "ui:widget": "updown",
+      "ui:widget": "updown"
     },
     maxHeel: {
-      "ui:widget": "updown",
+      "ui:widget": "updown"
     },
     speedStep: {
-      "ui:widget": "updown",
+      "ui:widget": "updown"
     },
     maxSpeed: {
-      "ui:widget": "updown",
+      "ui:widget": "updown"
     },
     mode: {
-      "ui:widget": "select",
-    },
-    updateCorrectionTable: {
-      "ui:widget": "hidden",
-    },
-    estimateBoatSpeed: {
-      "ui:widget": "hidden",
-    },
-    correctionStability: {
-      "ui:widget": "hidden",
+      "ui:widget": "select"
     },
     preventDuplication: {
-      "ui:widget": "checkbox",
-    },
-    assumeCurrent: {
-      "ui:widget": "hidden",
-    },
-    estimateCurrent: {
-      "ui:widget": "hidden",
-    },
-    currentStability: {
-      "ui:widget": "hidden",
+      "ui:widget": "checkbox"
     }
   };
 
@@ -253,10 +179,11 @@ module.exports = function (app) {
     // make options survive to the stop function
     options = opts;
     let smootherOptions = { timeConstant: 1, processVariance: 1, measurementVariance: 20, timeSpan: 1 };
-    loadPresets();
+  // Get mode-dependent options
+  const modeOptions = loadPresets();
 
-    // correction table
-    table = loadTable(options);
+  // correction table
+  table = loadTable({ ...options, ...modeOptions });
 
 
     // heading
@@ -393,7 +320,7 @@ module.exports = function (app) {
     reportVector.addPolar(groundSpeed);
 
     boatSpeedObserved.onChange = () => {
-      calculate();
+      calculate(modeOptions);
     };
 
 
@@ -408,7 +335,7 @@ module.exports = function (app) {
 
 
     // Main function, estimates boatSpeed, leeway and current
-    function calculate() {
+    function calculate(modeOptions) {
       // prepare iteration
       const heel = attitude.value.roll;
       const speed = boatSpeedObserved.magnitude;
@@ -418,30 +345,27 @@ module.exports = function (app) {
       if (!Number.isFinite(heel) || !Number.isFinite(speed) || !Number.isFinite(theta) ) return;
       const stable = situationIsStable(theta, COG);
 
-
-
       // update correction table
-      if (options.updateCorrectionTable  && stable && speed > 0) {
+      if (modeOptions.updateCorrectionTable  && stable && speed > 0) {
         table.update(speed, heel, groundSpeed, current, boatSpeedObserved, theta);
       }
 
       // correct and estimate boat speed
       estimateBoatSpeed(speed, heel);
 
-      if (options.assumeCurrent) {
+      if (modeOptions.assumeCurrent) {
         // estimate current ;
         estimateCurrent(theta);
       }
       calcResidual(theta);
 
-
       // Send calculated delta's
-      if (options.estimateCurrent) PolarSmoother.send(app, plugin.id, [current]);
-      if (options.estimateBoatSpeed) Polar.send(app, plugin.id, [boatSpeedCorrected]);
+      if (modeOptions.estimateCurrent) PolarSmoother.send(app, plugin.id, [current]);
+      if (modeOptions.estimateBoatSpeed) Polar.send(app, plugin.id, [boatSpeedCorrected]);
 
       // Save correction table 
       // periodically 
-      if (options.updateCorrectionTable && new Date() - lastSave > 5 * 60 * 1000) {
+      if (modeOptions.updateCorrectionTable && new Date() - lastSave > 5 * 60 * 1000) {
         lastSave = saveTable(options, table);
       }
     }
@@ -522,7 +446,7 @@ module.exports = function (app) {
       else {
         table = new CorrectionTable("correctionTable", row, col, options.correctionStability);
         app.debug("Correction table created");
-        options.doStartFresh = false;
+        // doStartFresh is not user-settable, so no need to reset it here
         lastSave = saveTable(options, table);
       }
       table.setDisplayAttributes({ label: "correction table" });
@@ -530,88 +454,91 @@ module.exports = function (app) {
     }
 
 
+    // Mode-dependent options are now managed in modeOptions, not user-settable
     function loadPresets() {
       const modeEnum = plugin.schema.properties.mode.enum;
       app.debug("Loading presests for mode: " + options.mode);
-
+      const modeOptions = {};
       switch (modeEnum.indexOf(options.mode)) {
         case -1:
           app.debug("Invalid mode");
           app.debug(options);
-          //options.mode = modeEnum[2]; 
+          //options.mode = modeEnum[2];
           break;
         case 0:
           // new table, no current
-          options.doStartFresh = true;
-          options.updateCorrectionTable = true;
-          options.estimateBoatSpeed = false;
-          options.assumeCurrent = false;
-          options.estimateCurrent = false;
-          options.correctionStability = 5;
-          options.mode = modeEnum[2];
+          modeOptions.doStartFresh = true;
+          modeOptions.updateCorrectionTable = true;
+          modeOptions.estimateBoatSpeed = false;
+          modeOptions.assumeCurrent = false;
+          modeOptions.estimateCurrent = false;
+          modeOptions.correctionStability = 5;
+          modeOptions.mode = modeEnum[2];
           break;
         case 1:
           // new table, with current
-          options.doStartFresh = true;
-          options.updateCorrectionTable = true;
-          options.estimateBoatSpeed = false;
-          options.assumeCurrent = true;
-          options.estimateCurrent = false;
-          options.correctionStability = 5;
-          options.currentStability = 7;
-          options.mode = modeEnum[3];
+          modeOptions.doStartFresh = true;
+          modeOptions.updateCorrectionTable = true;
+          modeOptions.estimateBoatSpeed = false;
+          modeOptions.assumeCurrent = true;
+          modeOptions.estimateCurrent = false;
+          modeOptions.correctionStability = 5;
+          modeOptions.currentStability = 7;
+          modeOptions.mode = modeEnum[3];
           break;
         case 2:
           // fresh table, no current
-          options.doStartFresh = false;
-          options.updateCorrectionTable = true;
-          options.estimateBoatSpeed = false;
-          options.assumeCurrent = false;
-          options.estimateCurrent = false;
-          options.correctionStability = 6;
+          modeOptions.doStartFresh = false;
+          modeOptions.updateCorrectionTable = true;
+          modeOptions.estimateBoatSpeed = false;
+          modeOptions.assumeCurrent = false;
+          modeOptions.estimateCurrent = false;
+          modeOptions.correctionStability = 6;
           break;
         case 3:
           // fresh table, with current
-          options.doStartFresh = false;
-          options.updateCorrectionTable = true;
-          options.estimateBoatSpeed = false;
-          options.assumeCurrent = true;
-          options.estimateCurrent = false;
-          options.correctionStability = 6;
-          options.currentStability = 6;
+          modeOptions.doStartFresh = false;
+          modeOptions.updateCorrectionTable = true;
+          modeOptions.estimateBoatSpeed = false;
+          modeOptions.assumeCurrent = true;
+          modeOptions.estimateCurrent = false;
+          modeOptions.correctionStability = 6;
+          modeOptions.currentStability = 6;
           break;
         case 4:
           // mature table, no current
-          options.doStartFresh = false;
-          options.updateCorrectionTable = true;
-          options.estimateBoatSpeed = true;
-          options.assumeCurrent = false;
-          options.estimateCurrent = false;
-          options.correctionStability = 10;
+          modeOptions.doStartFresh = false;
+          modeOptions.updateCorrectionTable = true;
+          modeOptions.estimateBoatSpeed = true;
+          modeOptions.assumeCurrent = false;
+          modeOptions.estimateCurrent = false;
+          modeOptions.correctionStability = 10;
           break;
         case 5:
           // mature table, with current
-          options.doStartFresh = false;
-          options.updateCorrectionTable = true;
-          options.estimateBoatSpeed = true;
-          options.assumeCurrent = true;
-          options.estimateCurrent = true;
-          options.correctionStability = 10;
-          options.currentStability = 3;
+          modeOptions.doStartFresh = false;
+          modeOptions.updateCorrectionTable = true;
+          modeOptions.estimateBoatSpeed = true;
+          modeOptions.assumeCurrent = true;
+          modeOptions.estimateCurrent = true;
+          modeOptions.correctionStability = 10;
+          modeOptions.currentStability = 3;
           break;
         case 6:
           // locked table
-          options.doStartFresh = false;
-          options.updateCorrectionTable = false;
-          options.estimateBoatSpeed = true;
-          options.assumeCurrent = true;
-          options.estimateCurrent = true;
-          options.currentStability = 2;
+          modeOptions.doStartFresh = false;
+          modeOptions.updateCorrectionTable = false;
+          modeOptions.estimateBoatSpeed = true;
+          modeOptions.assumeCurrent = true;
+          modeOptions.estimateCurrent = true;
+          modeOptions.currentStability = 2;
           break;
         case 7:
           // all manual configuration;
           break;
       }
+      // Use modeOptions throughout the code instead of options for these fields
+      return modeOptions;
     }
 
     // compare floats
