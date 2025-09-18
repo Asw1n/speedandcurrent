@@ -8,7 +8,7 @@ const { LeakyExtremes } = require('./LeakyExtremes.js');
 
 module.exports = function (app) {
 
-  let options = {};
+  let _settings = {};
   let isRunning = false;
   let corrTable = null;
   let lastSave = null;
@@ -171,26 +171,26 @@ module.exports = function (app) {
   }
 
 
-  plugin.start = (opts) => {
+  plugin.start = (settings) => {
     app.setPluginStatus("starting");
     app.debug("plugin starting");
     let outputs = [];
 
-    // make options survive to the stop function
-    options = opts;
+    // get settings to a wider scope so it can be used in the stop function
+    _settings = settings;
     let smootherOptions = { timeConstant: 1, processVariance: 1, measurementVariance: 20, timeSpan: 1 };
   // Get mode-dependent options
-  const modeOptions = loadPresets();
+  const modeOptions = loadPresets(settings);
 
   // correction table
-  table = loadTable({ ...options, ...modeOptions });
+  table = loadTable({ ...settings, ...modeOptions });
 
 
     // heading
     heading = createSmoothedHandler({
       id: "heading",
       path: "navigation.headingTrue",
-      source: opts.headingSource,
+      source: settings.headingSource,
       subscribe: true,
       app,
       pluginId: plugin.id,
@@ -212,7 +212,7 @@ module.exports = function (app) {
     attitude = createSmoothedHandler({
       id: "attitude",
       path: "navigation.attitude",
-      source: opts.attitudeSource,
+      source: settings.attitudeSource,
       subscribe: true,
       app,
       pluginId: plugin.id,
@@ -241,14 +241,14 @@ module.exports = function (app) {
       pathMagnitude: "navigation.speedThroughWater",
       pathAngle: null,
       subscribe: true,
-      sourceMagnitude: opts.boatSpeedSource,
-      sourceAngle: opts.boatSpeedSource,
+      sourceMagnitude: settings.boatSpeedSource,
+      sourceAngle: settings.boatSpeedSource,
       app,
       pluginId: plugin.id,
       SmootherClass: KalmanSmoother,
       smootherOptions: smootherOptions,
       displayAttributes: { label: "Observed boat Speed", plane: "Boat" },
-      passOn: !options.preventDuplication,
+      passOn: !_settings.preventDuplication,
     });
    
     boatSpeedCorrected = new Polar("correctedBoatSpeed", "navigation.speedThroughWater", "navigation.leewayAngle");
@@ -266,8 +266,8 @@ module.exports = function (app) {
       pathMagnitude: "navigation.speedOverGround",
       pathAngle: "navigation.courseOverGroundTrue",
       subscribe: true,
-      sourceMagnitude: opts.SOGSource,
-      sourceAngle: opts.COGSource,
+      sourceMagnitude: settings.SOGSource,
+      sourceAngle: settings.COGSource,
       app,
       pluginId: plugin.id,
       SmootherClass: KalmanSmoother,
@@ -296,6 +296,8 @@ module.exports = function (app) {
     residual = new Polar("residual");
     residual.setDisplayAttributes({ label: "residual", plane: "Ground" });
 
+
+    
     // Make reporting object for webApp
     reportFull = new Reporter();
     reportFull.addDelta(heading);
@@ -323,16 +325,9 @@ module.exports = function (app) {
       calculate(modeOptions);
     };
 
-
-
     isRunning = true;
     app.setPluginStatus("Running");
     app.debug("Running");
-
-
-
-
-
 
     // Main function, estimates boatSpeed, leeway and current
     function calculate(modeOptions) {
@@ -366,7 +361,7 @@ module.exports = function (app) {
       // Save correction table 
       // periodically 
       if (modeOptions.updateCorrectionTable && new Date() - lastSave > 5 * 60 * 1000) {
-        lastSave = saveTable(options, table);
+        lastSave = saveTable(_settings, table);
       }
     }
 
@@ -421,8 +416,8 @@ module.exports = function (app) {
     // Make sure the table matches the settings
     function enforceConsistancy(row, col) {
       // function is bugged due to IS units vs knots and degrees
-      if (!options?.correctionTable) return false;
-      table = options.correctionTable;
+      if (!_settings?.correctionTable) return false;
+      table = _settings.correctionTable;
       if (!table) return false;
       if (!table.row) return false;
       if (table.row.min != row.min) return false;
@@ -455,7 +450,7 @@ module.exports = function (app) {
 
 
     // Mode-dependent options are now managed in modeOptions, not user-settable
-    function loadPresets() {
+    function loadPresets(options) {
       const modeEnum = plugin.schema.properties.mode.enum;
       app.debug("Loading presests for mode: " + options.mode);
       const modeOptions = {};
@@ -557,7 +552,7 @@ module.exports = function (app) {
       try {
         //corrTable.save(app);
         if (corrTable != null) {
-          lastSave = saveTable(options, corrTable);
+          lastSave = saveTable(_settings, corrTable);
         }
 
         heading = heading?.terminate(app);
