@@ -1,4 +1,4 @@
-const { SI, MessageHandler, MessageHandlerDamped, Polar, PolarDamped, Reporter, ExponentialSmoother, MovingAverageSmoother, KalmanSmoother, MessageSmoother, PolarSmoother, createSmoothedPolar, createSmoothedHandler } = require('signalkutilities');
+const { SI, MessageHandler, MessageHandlerDamped, Polar, PolarDamped, Reporter, ExponentialSmoother, BaseSmoother, MovingAverageSmoother, KalmanSmoother, MessageSmoother, PolarSmoother, createSmoothedPolar, createSmoothedHandler } = require('signalkutilities');
 
 const { CorrectionTable } = require('./correctionTable.js');
 const { LeakyExtremes } = require('./LeakyExtremes.js');
@@ -12,15 +12,15 @@ module.exports = function (app) {
   let isRunning = false;
   let corrTable = null;
   let lastSave = null;
-  let heading = null;
+  let smoothedHeading = null;
   let stability = null;
-  let attitude = null;
-  let currentCalc = null;
-  let current = null;
-  let boatSpeedObserved = null;
-  let boatSpeedCorrected = null;
+  let smoothedAttitude = null;
+  let rawCurrent = null;
+  let smoothedCurrent = null;
+  let smoothedBoatSpeed = null;
+  let correctedBoatSpeed = null;
   let boatSpeedRefGround = null;
-  let groundSpeed = null;
+  let smoothedGroundSpeed = null;
   let speedCorrection = null;
   let residual = null;
   let reportFull = null;
@@ -37,21 +37,37 @@ module.exports = function (app) {
   plugin.schema = {
     type: "object",
     properties: {
-      mode: {
-        type: "string",
-        title: "Plugin mode",
-        description: "The mode of the plugin.",
-        enum: [
-          "Start with new correction table, no current",
-          "Start with new correction table, with current",
-          "Fresh correction table, no current",
-          "Fresh correction table, with current",
-          "Mature correction table, no current",
-          "Mature correction table, with current",
-          "Locked correction table",
-          "Manual configuration"
-        ],
-        default: "Start with new correction table, no current"
+      startWithNewTable: {
+        type: "boolean",
+        title: "Start with new table",
+        description: "Start with a new correction table (overrides existing table).",
+        default: false
+      },
+      estimateBoatSpeed: {
+        type: "boolean",
+        title: "Estimate Boat Speed",
+        description: "Enable estimation of boat speed.",
+        default: false
+      },
+      updateCorrectionTable: {
+        type: "boolean",
+        title: "Update Correction Table",
+        description: "Enable updating of the correction table.",
+        default: true
+      },
+      stability: {
+        type: "number",
+        title: "Correction Table Stability",
+        description: "Stability of the corrections (higher means that corrections are changed at a slower rate).",
+        default: 7,
+        minimum: 1,
+        maximum: 20
+      },
+      assumeCurrent: {
+        type: "boolean",
+        title: "Assume Current",
+        description: "Assume there is a current present when updating the correction table.",
+        default: false
       },
       heelStep: {
         type: "number",
@@ -117,7 +133,38 @@ module.exports = function (app) {
   };
 
   plugin.uiSchema = {
-    'ui:order': ["mode", "maxSpeed", "speedStep", "maxHeel", "heelStep", "headingSource", "boatSpeedSource", "COGSource", "SOGSource", "attitudeSource", "preventDuplication"],
+    'ui:order': [
+      "estimateBoatSpeed",
+      "updateCorrectionTable",
+      "assumeCurrent",
+      "startWithNewTable",
+      "stability",
+      "maxSpeed",
+      "speedStep",
+      "maxHeel",
+      "heelStep",
+      "headingSource",
+      "boatSpeedSource",
+      "COGSource",
+      "SOGSource",
+      "attitudeSource",
+      "preventDuplication"
+    ],
+    startWithNewTable: {
+      "ui:widget": "checkbox"
+    },
+    estimateBoatSpeed: {
+      "ui:widget": "checkbox"
+    },
+    updateCorrectionTable: {
+      "ui:widget": "checkbox"
+    },
+    stability: {
+      "ui:widget": "updown"
+    },
+    assumeCurrent: {
+      "ui:widget": "checkbox"
+    },
     heelStep: {
       "ui:widget": "updown"
     },
@@ -178,65 +225,75 @@ module.exports = function (app) {
 
     // get settings to a wider scope so it can be used in the stop function
     _settings = settings;
-    let smootherOptions = { timeConstant: 1, processVariance: 1, measurementVariance: 20, timeSpan: 1 };
+    let smootherOptions = { timeConstant: 1, processVariance: 1, measurementVariance: 20, timeSpan: 10 };
   // Get mode-dependent options
-  const modeOptions = loadPresets(settings);
+  //const modeOptions = loadPresets(settings);
 
-  // correction table
-  table = loadTable({ ...settings, ...modeOptions });
+  // load or create correction table
+  table = loadTable(settings);
 
 
     // heading
-    heading = createSmoothedHandler({
+    smoothedHeading = createSmoothedHandler({
       id: "heading",
       path: "navigation.headingTrue",
       source: settings.headingSource,
       subscribe: true,
       app,
       pluginId: plugin.id,
-      SmootherClass: KalmanSmoother,
+      SmootherClass: MovingAverageSmoother,
       smootherOptions: smootherOptions,
-      displayAttributes: { label: "Heading" },
+      displayAttributes: { label: "Heading (smoothed)" },
     });
-    // stability of heading
-    headingStability = new LeakyExtremes({ 
-      initialMin: 0, 
-      initialMax: Math.PI, 
-      tau: 2,
-      catchupTau: .2,
-      isAngle: true,
-      period: 2 * Math.PI
-    });
+    rawHeading = smoothedHeading.handler;
+    rawHeading.setDisplayAttributes({ label: "Heading" });
+
 
     //attitude
-    attitude = createSmoothedHandler({
+    smoothedAttitude = createSmoothedHandler({
       id: "attitude",
       path: "navigation.attitude",
       source: settings.attitudeSource,
       subscribe: true,
       app,
       pluginId: plugin.id,
-      SmootherClass: KalmanSmoother,
+      SmootherClass: MovingAverageSmoother,
       smootherOptions: smootherOptions,
-      displayAttributes: { label: "Attitude" }
+      displayAttributes: { label: "Attitude (smoothed)" }
     });
+    rawAttitude = smoothedAttitude.handler;
+    rawAttitude.setDisplayAttributes({ label: "Attitude" });
 
 
     // current
-    currentCalc = new Polar("current", "self.environment.current.drift", "self.environment.current.setTrue");
-    currentCalc.setDisplayAttributes({ label: "current", plane: "Ground" });
-    currentCalc.setAngleRange('0to2pi');
-    current = new PolarSmoother("currentDamped", currentCalc, KalmanSmoother, { processVariance: 1, measurementVariance: 100000 });
-    current.setAngleRange('0to2pi');
-    current.setDisplayAttributes({ label: "current", plane: "Ground" });
+    rawCurrent = new Polar("current", "self.environment.current.drift", "self.environment.current.setTrue");
+    rawCurrent.setDisplayAttributes({ label: "current", plane: "Ground" });
+    rawCurrent.setAngleRange('0to2pi');
+    smoothedCurrent = new PolarSmoother("currentDamped", rawCurrent, KalmanSmoother, { processVariance: 0.000001, measurementVariance: 0.01 });
+    smoothedCurrent.setAngleRange('0to2pi');
+    smoothedCurrent.setDisplayAttributes({ label: "Current", plane: "Ground" });
     // Current should be initialised as no current
-    currentCalc.setVectorValue({ x: 0, y: 0 });
+    rawCurrent.setVectorValue({ x: 0, y: 0 });
     // There should be at least two samples, otherwise we can't calculate a valid speed
-    current.sample();
-    current.sample();
+    smoothedCurrent.sample();
+    smoothedCurrent.sample();
+    // no current
+    noCurrent = createSmoothedPolar({
+      id: "boatSpeed",
+      pathMagnitude: "self.environment.current.drift",
+      pathAngle: "self.environment.current.setTrue",
+      subscribe: false,
+      app,
+      pluginId: plugin.id,
+      SmootherClass: BaseSmoother,
+      smootherOptions: smootherOptions,
+      displayAttributes: { label: "NoCurrent", plane: "Ground" },
+    });
+    noCurrent.xSmoother.reset(0,0);
+    noCurrent.ySmoother.reset(0,0);
 
     // boat speed
-    boatSpeedObserved = createSmoothedPolar({
+    smoothedBoatSpeed = createSmoothedPolar({
       id: "boatSpeed",
       pathMagnitude: "navigation.speedThroughWater",
       pathAngle: null,
@@ -245,14 +302,16 @@ module.exports = function (app) {
       sourceAngle: settings.boatSpeedSource,
       app,
       pluginId: plugin.id,
-      SmootherClass: KalmanSmoother,
+      SmootherClass: MovingAverageSmoother,
       smootherOptions: smootherOptions,
-      displayAttributes: { label: "Observed boat Speed", plane: "Boat" },
+      displayAttributes: { label: "Observed boat Speed (smoothed)", plane: "Boat" },
       passOn: !_settings.preventDuplication,
     });
+    rawBoatSpeed = smoothedBoatSpeed.polar;
+    rawBoatSpeed.setDisplayAttributes({ label: "Observed boat Speed", plane: "Boat" });
    
-    boatSpeedCorrected = new Polar("correctedBoatSpeed", "navigation.speedThroughWater", "navigation.leewayAngle");
-    boatSpeedCorrected.setDisplayAttributes({ label: "corrected boat speed", plane: "Boat" });
+    correctedBoatSpeed = new Polar("correctedBoatSpeed", "navigation.speedThroughWater", "navigation.leewayAngle");
+    correctedBoatSpeed.setDisplayAttributes({ label: "corrected boat speed", plane: "Boat" });
  
 
     // TODO: Add navigation.speedThroughWaterTransverse and navigation.speedThroughWaterLongitudinal
@@ -261,7 +320,7 @@ module.exports = function (app) {
     boatSpeedRefGround.setDisplayAttributes("Boat speed over ground", "Ground");
 
     // ground speed
-    groundSpeed = createSmoothedPolar({
+    smoothedGroundSpeed = createSmoothedPolar({
       id: "groundSpeed",
       pathMagnitude: "navigation.speedOverGround",
       pathAngle: "navigation.courseOverGroundTrue",
@@ -270,21 +329,16 @@ module.exports = function (app) {
       sourceAngle: settings.COGSource,
       app,
       pluginId: plugin.id,
-      SmootherClass: KalmanSmoother,
+      SmootherClass: MovingAverageSmoother,
       smootherOptions: smootherOptions,
-      displayAttributes: { label: "Ground Speed", plane: "Ground" },
+      displayAttributes: { label: "Ground Speed (smoothed)", plane: "Ground" },
       passOn: true,
       angleRange: '0to2pi'
     });
-    // groundSpeed stability
-    COGStability = new LeakyExtremes({
-      initialMin: 0,
-      initialMax: Math.PI,
-      tau: 2,
-      catchupTau: .2,
-      isAngle: true,
-      period: 2 * Math.PI
-    });
+    rawGroundSpeed = smoothedGroundSpeed.polar;
+    rawGroundSpeed.setDisplayAttributes({ label: "Ground Speed", plane: "Ground" });
+
+
 
 
     // correction vector
@@ -296,33 +350,43 @@ module.exports = function (app) {
     residual = new Polar("residual");
     residual.setDisplayAttributes({ label: "residual", plane: "Ground" });
 
-
-    
-    // Make reporting object for webApp
     reportFull = new Reporter();
-    reportFull.addDelta(heading);
-    reportFull.addAttitude(attitude);
-    reportFull.addPolar(groundSpeed);
-    reportFull.addPolar(boatSpeedObserved);
-    //reportFull.addPolar(boatSpeedStat);
-    //reportFull.addPolar(groundSpeedStat);
-    reportFull.addPolar(speedCorrection);
-    reportFull.addPolar(boatSpeedCorrected);
-    reportFull.addPolar(current);
-    reportFull.addPolar(residual);
+
+    if (settings.estimateBoatSpeed) {
+      reportFull.addDelta(rawHeading);
+      reportFull.addAttitude(rawAttitude);
+      reportFull.addPolar(rawBoatSpeed);
+      reportFull.addPolar(speedCorrection);
+      reportFull.addPolar(correctedBoatSpeed);
+      reportFull.addPolar(rawGroundSpeed);
+      reportFull.addPolar(smoothedCurrent);
+    }
+    if (settings.updateCorrectionTable) {
+      reportFull.addDelta(smoothedHeading);
+      reportFull.addAttitude(smoothedAttitude);
+      reportFull.addPolar(smoothedBoatSpeed);
+      reportFull.addPolar(smoothedGroundSpeed);
+        if (settings.assumeCurrent) reportFull.addPolar(smoothedCurrent);
+      reportFull.addPolar(speedCorrection);
+      reportFull.addPolar(residual);
+    }
     reportFull.addTable(table);
 
+    // Make reporting object for webApp
+
+
     reportVector = new Reporter();
-    reportVector.addDelta(heading);
+    reportVector.addDelta(rawHeading);
     reportVector.addPolar(residual);
     reportVector.addPolar(speedCorrection);
-    reportVector.addPolar(currentCalc);
-    reportVector.addPolar(boatSpeedCorrected);
-    reportVector.addPolar(boatSpeedObserved);
-    reportVector.addPolar(groundSpeed);
+    if (settings.assumeCurrent) reportVector.addPolar(smoothedCurrent);
+    reportVector.addPolar(correctedBoatSpeed);
+    reportVector.addPolar(rawBoatSpeed);
+    reportVector.addPolar(rawGroundSpeed);
 
-    boatSpeedObserved.onChange = () => {
-      calculate(modeOptions);
+    smoothedBoatSpeed.onChange = () => {
+      if (settings.estimateBoatSpeed) correct();
+      if (settings.updateCorrectionTable) updateTable(settings.assumeCurrent);
     };
 
     isRunning = true;
@@ -330,88 +394,85 @@ module.exports = function (app) {
     app.debug("Running");
 
     // Main function, estimates boatSpeed, leeway and current
-    function calculate(modeOptions) {
+    function correct() {
       // prepare iteration
-      const heel = attitude.value.roll;
-      const speed = boatSpeedObserved.magnitude;
-      const theta = heading.value;
-      const COG = groundSpeed.angle;
+      const heel = rawAttitude.value.roll;
+      const speed = rawBoatSpeed.magnitude;
+      const theta = rawHeading.value;
+      //app.debug(`Heel: ${SI.toDegrees(heel).toFixed(1)}°, Speed: ${SI.toKnots(speed).toFixed(2)} kn, Heading: ${SI.toDegrees(theta).toFixed(1)}°`);
+      if (!Number.isFinite(heel) || !Number.isFinite(speed) || !Number.isFinite(theta)) {
+        //app.debug("Invalid input data");
+        return;
+      }
+      // correct boat speed for heel and speed
+      cor = table.getKalmanCorrection(speed, heel);
+      //app.debug(cor);
+      correctedBoatSpeed.copyFrom(rawBoatSpeed);
+      speedCorrection.setVectorValue(cor);
+      correctedBoatSpeed.add(speedCorrection);
+      Polar.send(app, plugin.id, [correctedBoatSpeed]);
+      // estimate current
+      boatSpeedRefGround.copyFrom(correctedBoatSpeed);
+      boatSpeedRefGround.rotate(theta);
+      rawCurrent.copyFrom(rawGroundSpeed);
+      rawCurrent.substract(boatSpeedRefGround);
+      smoothedCurrent.sample();
+      PolarSmoother.send(app, plugin.id, [smoothedCurrent]);
+    }
+
+
+    function updateTable(assumeCurrent = false) {
+      // prepare iteration
+      const heel = smoothedAttitude.value.roll;
+      const speed = smoothedBoatSpeed.magnitude;
+      const theta = smoothedHeading.value;
 
       if (!Number.isFinite(heel) || !Number.isFinite(speed) || !Number.isFinite(theta) ) return;
-      const stable = situationIsStable(theta, COG);
 
       // update correction table
-      if (modeOptions.updateCorrectionTable  && stable && speed > 0) {
-        table.update(speed, heel, groundSpeed, current, boatSpeedObserved, theta);
+      if ( speed > SI.fromKnots(settings.speedStep/2)) {
+        table.update(speed, heel, smoothedGroundSpeed, assumeCurrent ? smoothedCurrent : noCurrent, smoothedBoatSpeed, theta);
       }
 
-      // correct and estimate boat speed
-      estimateBoatSpeed(speed, heel);
-
-      if (modeOptions.assumeCurrent) {
-        // estimate current ;
-        estimateCurrent(theta);
-      }
-      calcResidual(theta);
-
-      // Send calculated delta's
-      if (modeOptions.estimateCurrent) PolarSmoother.send(app, plugin.id, [current]);
-      if (modeOptions.estimateBoatSpeed) Polar.send(app, plugin.id, [boatSpeedCorrected]);
-
-      // Save correction table 
-      // periodically 
-      if (modeOptions.updateCorrectionTable && new Date() - lastSave > 5 * 60 * 1000) {
-        lastSave = saveTable(_settings, table);
-      }
-    }
-
-    // estimates boat speed from observed boatSpeed and correction
-    function estimateBoatSpeed(speed, heel) {
-      cor = table.getKalmanCorrection(speed, heel);
-      boatSpeedCorrected.copyFrom(boatSpeedObserved);
-      speedCorrection.setVectorValue(cor);
-      boatSpeedCorrected.add(speedCorrection);
-    }
-
-    // estimates current from observed groundspeed and estimated boatspeed 
-    function estimateCurrent(theta) {
-      boatSpeedRefGround.copyFrom(boatSpeedCorrected);
-      boatSpeedRefGround.rotate(theta);
-      currentCalc.copyFrom(groundSpeed);
-      currentCalc.substract(boatSpeedRefGround);
-      current.sample();
-    }
-
-    // Calculate what ground speed is observed that is not attributed to estimated boat speed or estimated current
-    function calcResidual(theta) {
-      residual.copyFrom(groundSpeed);
-      boatSpeedRefGround.copyFrom(boatSpeedCorrected);
+      // calculate residual
+      residual.copyFrom(smoothedGroundSpeed);
+      boatSpeedRefGround.copyFrom(correctedBoatSpeed);
       boatSpeedRefGround.rotate(theta);
       residual.substract(boatSpeedRefGround);
-      residual.substract(current);
+      residual.substract(smoothedCurrent);
+
+      // Save correction table periodically 
+      if ( new Date() - lastSave > 5 * 60 * 1000) {
+        lastSave = saveTable(_settings, table);
+      }
+
+      function situationIsStable(theta, COG) {
+        // update stabilities
+        headingStability.update(theta);
+        COGStability.update(COG);
+        let stable = true;
+        if (headingStability.range > SI.fromDegrees(5)) {
+          smoothedHeading.setDisplayAttribute("unstable", true);
+          stable = false;
+        }
+        else {
+          smoothedHeading.setDisplayAttribute("unstable", false);
+        }
+        if (COGStability.range > SI.fromDegrees(5)) {
+          smoothedGroundSpeed.setDisplayAttribute("unstable", true);
+          stable = false;
+        }
+        else {
+          smoothedGroundSpeed.setDisplayAttribute("unstable", false);
+        }
+        return stable;
+      }
+
     }
 
-    function situationIsStable( theta, COG) {
-    // update stabilities
-    headingStability.update(theta);
-    COGStability.update(COG);
-    let stable = true;
-    if (headingStability.range > SI.fromDegrees(5)) {
-      heading.setDisplayAttribute("unstable", true);
-      stable = false;
-    }
-    else {
-      heading.setDisplayAttribute("unstable", false);
-    }
-    if (COGStability.range > SI.fromDegrees(5)) {
-      groundSpeed.setDisplayAttribute("unstable", true);
-      stable = false;
-    }
-    else {
-      groundSpeed.setDisplayAttribute("unstable", false);
-    }
-    return stable;
-  }
+
+
+
 
     // Make sure the table matches the settings
     function enforceConsistancy(row, col) {
@@ -433,15 +494,17 @@ module.exports = function (app) {
       const row = { min: 0, max: SI.fromKnots(options.maxSpeed), step: SI.fromKnots(options.speedStep) };
       const col = { min: -SI.fromDegrees(options.maxHeel), max: SI.fromDegrees(options.maxHeel), step: SI.fromDegrees(options.heelStep) };
       let table;
-      if (enforceConsistancy(row, col) && !options.doStartFresh) {
-        table = CorrectionTable.fromJSON(options.correctionTable, options.correctionStability);
+      const stability = (options.stability !== undefined) ? options.stability : 6;
+      if (enforceConsistancy(row, col) && !options.startWithNewTable) {
+        table = CorrectionTable.fromJSON(options.correctionTable, stability);
         app.debug("Correction table loaded");
         lastSave = new Date();
       }
       else {
-        table = new CorrectionTable("correctionTable", row, col, options.correctionStability);
+        table = new CorrectionTable("correctionTable", row, col, stability);
         app.debug("Correction table created");
         // doStartFresh is not user-settable, so no need to reset it here
+        options.startWithNewTable = false;
         lastSave = saveTable(options, table);
       }
       table.setDisplayAttributes({ label: "correction table" });
@@ -555,16 +618,16 @@ module.exports = function (app) {
           lastSave = saveTable(_settings, corrTable);
         }
 
-        heading = heading?.terminate(app);
+        smoothedHeading = smoothedHeading?.terminate(app);
         stability = stability?.terminate(app);
-        attitude = attitude?.terminate(app);
-        currentCalc = currentCalc?.terminate(app);
-        current = null;
-        boatSpeedObserved = boatSpeedObserved?.terminate(app);
+        smoothedAttitude = smoothedAttitude?.terminate(app);
+        rawCurrent = rawCurrent?.terminate(app);
+        smoothedCurrent = null;
+        smoothedBoatSpeed = smoothedBoatSpeed?.terminate(app);
         boatSpeedStat = null;
-        boatSpeedCorrected = boatSpeedCorrected?.terminate(app);
+        correctedBoatSpeed = correctedBoatSpeed?.terminate(app);
         boatSpeedRefGround = boatSpeedRefGround?.terminate(app);
-        groundSpeed = groundSpeed?.terminate(app);
+        smoothedGroundSpeed = smoothedGroundSpeed?.terminate(app);
         groundSpeedStat = null;
         speedCorrection = speedCorrection?.terminate(app);
         residual = residual?.terminate(app);

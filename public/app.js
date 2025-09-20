@@ -160,7 +160,7 @@ function updatePolar(data) {
   const table = document.createElement('table');
   table.classList.add('polar');
   const headerRow = document.createElement('tr');
-  headerRow.innerHTML = '<th>Label</th><th>Speed</th><th>Angle</th>';
+  headerRow.innerHTML = '<th>Label</th><th>Speed</th><th>Angle</th><th>Trace</th>';
   table.appendChild(headerRow);
 
   data.polars.forEach(polar => {
@@ -171,8 +171,8 @@ function updatePolar(data) {
     console.log(polar);
     if (polar.displayAttributes.unstable) {
       row.classList.add('unstable');
-    } 
-    row.innerHTML = `<td>${polar.displayAttributes.label}</td><td>${cSpeed(polar.magnitude)}</td><td>${cAngle(polar.angle)}</td>`;
+    }
+    row.innerHTML = `<td>${polar.displayAttributes.label}</td><td>${cSpeed(polar.magnitude)}</td><td>${cAngle(polar.angle)}</td><td>${(polar.trace ? (Number(polar.trace).toPrecision(2)) : '')}</td>`;
     table.appendChild(row);
   });
 
@@ -186,7 +186,7 @@ function updateDelta(data) {
   const table = document.createElement('table');
   table.classList.add('delta');
   const headerRow = document.createElement('tr');
-  headerRow.innerHTML = '<th>Label</th><th>Value</th>';
+  headerRow.innerHTML = '<th>Label</th><th>Value</th><th>Variance</th>';
   table.appendChild(headerRow);
 
   data.deltas.forEach(delta => {
@@ -197,7 +197,7 @@ function updateDelta(data) {
     if (delta.displayAttributes.unstable) {
       row.classList.add('unstable');
     }
-    row.innerHTML = `<td>${delta.displayAttributes.label}</td><td>${cAngle(delta.value)}</td>`;
+    row.innerHTML = `<td>${delta.displayAttributes.label}</td><td>${cAngle(delta.value)}</td><td>${(delta.variance ? (Number(delta.variance).toPrecision(2)) : '')}</td>`;
     table.appendChild(row);
   });
 

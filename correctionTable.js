@@ -94,12 +94,12 @@ class CorrectionEstimator {
     return {
       observation: {
         stateProjection: [[1, 0], [0, 1]], // observation matrix H
-        covariance: [[10 ** stability, 0], [0, 10 ** stability]], //measurement noise R
+        covariance: [[1, 0], [0, 1]], //measurement noise R
         dimension: 2
       },
       dynamic: {
         transition: [[1, 0], [0, 1]], // state transition matrix F
-        covariance: [1, 1],// process noise covariance matrix Q
+        covariance: [1/10**stability, 1/10**stability],// process noise covariance matrix Q
       }
     };
   }
@@ -113,7 +113,11 @@ class CorrectionEstimator {
   }
   
   update(groundSpeed, current, boatSpeed, heading) {
-    if(groundSpeed.n < 2 || current.n < 2 || boatSpeed.n < 2)  return;
+    if(groundSpeed.xVariance == null || groundSpeed.yVariance == null ||
+       current.xVariance == null || current.yVariance == null ||
+       boatSpeed.xVariance == null || boatSpeed.yVariance == null ) {
+       return false;
+    }
     // Rotation matrix for -theta
     const cosTheta = Math.cos(heading);
     const sinTheta = Math.sin(heading);
@@ -152,8 +156,9 @@ class CorrectionEstimator {
       groundCov[1][0] + currentCov[1][0] + boatCov[1][0],
       groundCov[1][1] + currentCov[1][1] + boatCov[1][1]],
     ];
-
     this.filterState = this.filter.filter({ previousCorrected: this.filterState, observation, observationCovariance });
+    //console.log("Filterstate:", this.filterState, "Covariance:", observationCovariance);
+    return true;
   }
 
 
