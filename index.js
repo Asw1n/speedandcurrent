@@ -279,9 +279,9 @@ module.exports = function (app) {
     smoothedCurrent.setDisplayAttributes({ label: "Current", plane: "Ground" });
     // Current should be initialised as no current
     rawCurrent.setVectorValue({ x: 0, y: 0 });
-    // There should be at least two samples, otherwise we can't calculate a valid speed
-    smoothedCurrent.sample();
-    smoothedCurrent.sample();
+    // Strongly assume no current at start
+    smoothedCurrent.xSmoother.reset(0, 0.00000001);
+    smoothedCurrent.ySmoother.reset(0, 0.00000001);
     // no current
     noCurrent = createSmoothedPolar({
       id: "boatSpeed",
@@ -393,17 +393,20 @@ module.exports = function (app) {
     reportVector.addPolar(rawBoatSpeed);
     reportVector.addPolar(rawGroundSpeed);
 
-    smoothedBoatSpeed.onChange = () => {
-      if (settings.estimateBoatSpeed) correct();
-      if (settings.updateCorrectionTable) updateTable(settings.assumeCurrent);
-    };
-
     isRunning = true;
+    started = new Date();
     app.setPluginStatus("Running");
     app.debug("Running");
 
+    smoothedBoatSpeed.onChange = () => {
+      const wellUnderway = started < new Date() - smootherOptions.timeSpan * 1000;
+      if (settings.estimateBoatSpeed) correct(wellUnderway);
+      if (settings.updateCorrectionTable && wellUnderway) updateTable(settings.assumeCurrent);
+    };
+
+
     // Main function, estimates boatSpeed, leeway and current
-    function correct() {
+    function correct(wellUnderway) {
       // prepare iteration
       const heel = rawAttitude.value.roll;
       const speed = rawBoatSpeed.magnitude;
@@ -423,13 +426,16 @@ module.exports = function (app) {
       correctedBoatSpeed.add(speedCorrection);
       Polar.send(app, plugin.id, [correctedBoatSpeed]);
       // estimate current
-      boatSpeedRefGround.copyFrom(correctedBoatSpeed);
-      boatSpeedRefGround.rotate(theta);
-      rawCurrent.copyFrom(rawGroundSpeed);
-      rawCurrent.substract(boatSpeedRefGround);
-      smoothedCurrent.sample();
+      if (wellUnderway) {
+        boatSpeedRefGround.copyFrom(correctedBoatSpeed);
+        boatSpeedRefGround.rotate(theta);
+        rawCurrent.copyFrom(rawGroundSpeed);
+        rawCurrent.substract(boatSpeedRefGround);
+        smoothedCurrent.sample();
+      }
       PolarSmoother.send(app, plugin.id, [smoothedCurrent]);
     }
+
 
 
     function updateTable(assumeCurrent = false) {

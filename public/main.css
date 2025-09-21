@@ -28,9 +28,6 @@
   color: black;
 }
 
-.unstable {
-  background: rgb(172, 172, 172);
-}
 
 /* --- Instance IDs for Specific Colors --- */
 #heading {
@@ -90,8 +87,7 @@ th, td {
   font-size: 11px;
 }
 .selectedCell {
-  color: #fff;
-  background-color: #1976d2;
+  color: rgb(17, 204, 0);
 }
 .emptyCell {
 }

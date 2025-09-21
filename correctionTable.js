@@ -69,8 +69,10 @@ class CorrectionTable extends Table2D{
     let varY = 0;
     let totalWeight = 0;
     for (const neighbour of this.neighbours) {
-      const { cell:correction, weight } = neighbour;
+      const { cell:correction, dist } = neighbour;
       if (correction.N > 0) {
+        const weight = 1 / (dist + 1e-6); 
+        neighbour.normWeight = weight;
         x += correction.x * weight;
         y += correction.y * weight;
         varX += correction.covariance[0][0] * weight ** 2;
@@ -78,6 +80,10 @@ class CorrectionTable extends Table2D{
         totalWeight += weight;
       }
     }
+    for (const neighbour of this.neighbours) {
+      if (totalWeight > 0) neighbour.normWeight /= totalWeight;
+    }
+
     const corrAndVar = { correction: { x, y }, variance: { x: varX, y: varY } };
     if (totalWeight === 0) return corrAndVar;
 
