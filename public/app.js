@@ -168,7 +168,6 @@ function updatePolar(data) {
     if (polar.id) {
       row.id = polar.id;
     }
-    console.log(polar);
     if (polar.displayAttributes.unstable) {
       row.classList.add('unstable');
     }

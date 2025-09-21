@@ -17,6 +17,7 @@ class CorrectionTable extends Table2D{
   constructor(id, row, col, stability=5) {
     super(id, row, col, CorrectionEstimator, CorrectionEstimator.getFilterModel(stability));
     this.lastUpdatedCell = null;
+    this.neighbours = [];
   }
   
   update(speed, heel, groundSpeed, current, boatSpeed, heading) {
@@ -57,6 +58,38 @@ class CorrectionTable extends Table2D{
     return { x:x, y:y };
 
   }
+
+  getCorrection(speed, heel) {
+    this.neighbours = this.findClosest(speed, heel, 5);
+    if (this.neighbours.length == 0) return { correction: {x: 0, y: 0}, variance: null };
+    // Compute the correction and variance from the neighbours
+    let x = 0;
+    let y = 0;
+    let varX = 0;
+    let varY = 0;
+    let totalWeight = 0;
+    for (const neighbour of this.neighbours) {
+      const { cell:correction, weight } = neighbour;
+      if (correction.N > 0) {
+        x += correction.x * weight;
+        y += correction.y * weight;
+        varX += correction.covariance[0][0] * weight ** 2;
+        varY += correction.covariance[1][1] * weight ** 2;
+        totalWeight += weight;
+      }
+    }
+    const corrAndVar = { correction: { x, y }, variance: { x: varX, y: varY } };
+    if (totalWeight === 0) return corrAndVar;
+
+    // Compute the final correction and variance
+    x /= totalWeight;
+    y /= totalWeight;
+    varX /= totalWeight;
+    varY /= totalWeight;
+    this.totalWeight = totalWeight;
+
+    return { correction: { x, y }, variance: { x: varX, y: varY } };
+  }
   
   report() {
     return {
@@ -70,6 +103,12 @@ class CorrectionTable extends Table2D{
           cellReport.displayAttributes = {
             selected: correction === this.lastUpdatedCell
           };
+          const found = this.neighbours.find(n => n.cell === correction);
+          if (found) {
+            cellReport.displayAttributes.normWeight = found.normWeight;
+          } else {
+            cellReport.displayAttributes.normWeight = 0;
+          }
           return cellReport;
         })
       ),

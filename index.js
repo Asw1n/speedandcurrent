@@ -1,4 +1,9 @@
-const { SI, MessageHandler, MessageHandlerDamped, Polar, PolarDamped, Reporter, ExponentialSmoother, BaseSmoother, MovingAverageSmoother, KalmanSmoother, MessageSmoother, PolarSmoother, createSmoothedPolar, createSmoothedHandler } = require('signalkutilities');
+// speed correction is always zero
+//bostspeedrefground is not shown
+// current har low variance compared to boat speed and ground speed
+
+
+const { SI, MessageHandler, MessageHandlerDamped, Polar, Reporter, ExponentialSmoother, BaseSmoother, MovingAverageSmoother, KalmanSmoother, MessageSmoother, PolarSmoother, createSmoothedPolar, createSmoothedHandler } = require('signalkutilities');
 
 const { CorrectionTable } = require('./correctionTable.js');
 const { LeakyExtremes } = require('./LeakyExtremes.js');
@@ -225,7 +230,7 @@ module.exports = function (app) {
 
     // get settings to a wider scope so it can be used in the stop function
     _settings = settings;
-    let smootherOptions = { timeConstant: 1, processVariance: 1, measurementVariance: 20, timeSpan: 10 };
+    let smootherOptions = { timeConstant: 1, processVariance: 1, measurementVariance: 20, timeSpan: 5 };
   // Get mode-dependent options
   //const modeOptions = loadPresets(settings);
 
@@ -366,7 +371,11 @@ module.exports = function (app) {
       reportFull.addAttitude(smoothedAttitude);
       reportFull.addPolar(smoothedBoatSpeed);
       reportFull.addPolar(smoothedGroundSpeed);
-        if (settings.assumeCurrent) reportFull.addPolar(smoothedCurrent);
+
+        if (settings.assumeCurrent) {
+          reportFull.addPolar(boatSpeedRefGround);
+          reportFull.addPolar(smoothedCurrent);
+        }
       reportFull.addPolar(speedCorrection);
       reportFull.addPolar(residual);
     }
@@ -405,10 +414,12 @@ module.exports = function (app) {
         return;
       }
       // correct boat speed for heel and speed
-      cor = table.getKalmanCorrection(speed, heel);
+      //const cor = table.getKalmanCorrection(speed, heel);
+      const {correction, variance} = table.getCorrection(speed, heel);
+      speedCorrection.setVectorValue(correction,variance);
+
       //app.debug(cor);
       correctedBoatSpeed.copyFrom(rawBoatSpeed);
-      speedCorrection.setVectorValue(cor);
       correctedBoatSpeed.add(speedCorrection);
       Polar.send(app, plugin.id, [correctedBoatSpeed]);
       // estimate current

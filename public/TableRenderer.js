@@ -90,7 +90,19 @@ class TableRenderer {
       else {
       cell.classList.add('emptyCell');
       }
-      if (value.displayAttributes && value.displayAttributes.selected) cell.classList.add('selectedCell');
+      if (value.displayAttributes && value.displayAttributes.selected) {
+        cell.classList.add('selectedCell');
+        console.log(value);
+      }
+      if (value.displayAttributes && value.displayAttributes.normWeight) {
+        const weight = Math.min(1, value.displayAttributes.normWeight);
+        // Exponential scale for better visual contrast
+        const scaled = Math.pow(weight, 0.4); // 0.4 is a good starting point, adjust as needed
+        const red = Math.round(255 - 255 * scaled);
+        const green = Math.round(255 - 255 * scaled);
+        const blue = 255;
+        cell.style.backgroundColor = `rgb(${red}, ${green}, ${blue})`;
+      }
 
       rowElement.appendChild(cell);
       cIndex++;
