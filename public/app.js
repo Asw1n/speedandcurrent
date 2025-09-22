@@ -171,7 +171,7 @@ function updatePolar(data) {
     if (polar.displayAttributes.unstable) {
       row.classList.add('unstable');
     }
-    row.innerHTML = `<td>${polar.displayAttributes.label}</td><td>${cSpeed(polar.magnitude)}</td><td>${cAngle(polar.angle)}</td><td>${(polar.trace ? (Number(polar.trace).toPrecision(2)) : '')}</td>`;
+  row.innerHTML = `<td>${polar.displayAttributes.label}</td><td>${cSpeed(polar.magnitude)}</td><td>${cAngle(polar.angle)}</td><td>${(polar.trace !== undefined && polar.trace !== null ? Number(polar.trace).toPrecision(2) : '')}</td>`;
     table.appendChild(row);
   });
 
@@ -196,7 +196,7 @@ function updateDelta(data) {
     if (delta.displayAttributes.unstable) {
       row.classList.add('unstable');
     }
-    row.innerHTML = `<td>${delta.displayAttributes.label}</td><td>${cAngle(delta.value)}</td><td>${(delta.variance ? (Number(delta.variance).toPrecision(2)) : '')}</td>`;
+  row.innerHTML = `<td>${delta.displayAttributes.label}</td><td>${cAngle(delta.value)}</td><td>${(delta.variance !== undefined && delta.variance !== null ? Number(delta.variance).toPrecision(2) : '')}</td>`;
     table.appendChild(row);
   });
 
