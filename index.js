@@ -1,21 +1,11 @@
-// speed correction is always zero
-//bostspeedrefground is not shown
-// current har low variance compared to boat speed and ground speed
-
-
-const { SI, MessageHandler, MessageHandlerDamped, Polar, Reporter, ExponentialSmoother, BaseSmoother, MovingAverageSmoother, KalmanSmoother, MessageSmoother, PolarSmoother, createSmoothedPolar, createSmoothedHandler } = require('signalkutilities');
+const { SI, MessageHandler, MessageHandlerDamped, Polar, Reporter, BaseSmoother, MovingAverageSmoother, KalmanSmoother, PolarSmoother, createSmoothedPolar, createSmoothedHandler } = require('signalkutilities');
 
 const { CorrectionTable } = require('./correctionTable.js');
-const { LeakyExtremes } = require('./LeakyExtremes.js');
-
-
-
 
 module.exports = function (app) {
 
   let _settings = {};
   let isRunning = false;
-  let corrTable = null;
   let lastSave = null;
   let smoothedHeading = null;
   let stability = null;
@@ -36,8 +26,6 @@ module.exports = function (app) {
   plugin.id = "SpeedAndCurrent";
   plugin.name = "Speed and current";
   plugin.description = "A plugin that uses sensor fusion to get boat speed, current and leeway.";
-
-
 
   plugin.schema = {
     type: "object",
@@ -190,7 +178,6 @@ module.exports = function (app) {
     }
   };
 
-
   plugin.registerWithRouter = function (router) {
     app.debug('registerWithRouter');
 
@@ -214,30 +201,16 @@ module.exports = function (app) {
 
   }
 
-  // ...existing code...
-
-  function saveTable(options, correctionTable) {
-    options.correctionTable = correctionTable.toJSON();
-    app.savePluginOptions(options, () => { app.debug('Correction table saved') });
-    return new Date();
-  }
-
-
   plugin.start = (settings) => {
-    app.setPluginStatus("starting");
-    app.debug("plugin starting");
-    let outputs = [];
-
+    app.setPluginStatus("Starting");
+    app.debug("Starting");
+  
     // get settings to a wider scope so it can be used in the stop function
     _settings = settings;
     let smootherOptions = { timeConstant: 1, processVariance: 1, measurementVariance: 20, timeSpan: 5 };
-  // Get mode-dependent options
-  //const modeOptions = loadPresets(settings);
+    table = loadTable(settings);
 
-  // load or create correction table
-  table = loadTable(settings);
-
-
+    //#region Handler and Polar Initialization
     // heading
     smoothedHeading = createSmoothedHandler({
       id: "heading",
@@ -345,7 +318,6 @@ module.exports = function (app) {
 
 
 
-
     // correction vector
     speedCorrection = new Polar("speedCorrection");
     speedCorrection.setDisplayAttributes("speed correction", "Boat");
@@ -355,6 +327,9 @@ module.exports = function (app) {
     residual = new Polar("residual");
     residual.setDisplayAttributes({ label: "residual", plane: "Ground" });
 
+    //#endregion
+
+    //#region Reporting
     reportFull = new Reporter();
 
     if (settings.estimateBoatSpeed) {
@@ -392,6 +367,7 @@ module.exports = function (app) {
     reportVector.addPolar(correctedBoatSpeed);
     reportVector.addPolar(rawBoatSpeed);
     reportVector.addPolar(rawGroundSpeed);
+    //#endregion
 
     isRunning = true;
     started = new Date();
@@ -400,239 +376,17 @@ module.exports = function (app) {
 
     smoothedBoatSpeed.onChange = () => {
       const wellUnderway = started < new Date() - smootherOptions.timeSpan * 1000;
+      const minSpeed = SI.fromKnots(settings.speedStep / 2);
       if (settings.estimateBoatSpeed) correct(wellUnderway);
-      if (settings.updateCorrectionTable && wellUnderway) updateTable(settings.assumeCurrent);
+      if (settings.updateCorrectionTable && wellUnderway) updateTable(settings.assumeCurrent, minSpeed);
     };
-
-
-    // Main function, estimates boatSpeed, leeway and current
-    function correct(wellUnderway) {
-      // prepare iteration
-      const heel = rawAttitude.value.roll;
-      const speed = rawBoatSpeed.magnitude;
-      const theta = rawHeading.value;
-      //app.debug(`Heel: ${SI.toDegrees(heel).toFixed(1)}°, Speed: ${SI.toKnots(speed).toFixed(2)} kn, Heading: ${SI.toDegrees(theta).toFixed(1)}°`);
-      if (!Number.isFinite(heel) || !Number.isFinite(speed) || !Number.isFinite(theta)) {
-        //app.debug("Invalid input data");
-        return;
-      }
-      // correct boat speed for heel and speed
-      //const cor = table.getKalmanCorrection(speed, heel);
-      const {correction, variance} = table.getCorrection(speed, heel);
-      speedCorrection.setVectorValue(correction,variance);
-
-      //app.debug(cor);
-      correctedBoatSpeed.copyFrom(rawBoatSpeed);
-      correctedBoatSpeed.add(speedCorrection);
-      Polar.send(app, plugin.id, [correctedBoatSpeed]);
-      // estimate current
-      if (wellUnderway) {
-        boatSpeedRefGround.copyFrom(correctedBoatSpeed);
-        boatSpeedRefGround.rotate(theta);
-        rawCurrent.copyFrom(rawGroundSpeed);
-        rawCurrent.substract(boatSpeedRefGround);
-        smoothedCurrent.sample();
-      }
-      PolarSmoother.send(app, plugin.id, [smoothedCurrent]);
-    }
-
-
-
-    function updateTable(assumeCurrent = false) {
-      // prepare iteration
-      const heel = smoothedAttitude.value.roll;
-      const speed = smoothedBoatSpeed.magnitude;
-      const theta = smoothedHeading.value;
-
-      if (!Number.isFinite(heel) || !Number.isFinite(speed) || !Number.isFinite(theta) ) return;
-
-      // update correction table
-      if ( speed > SI.fromKnots(settings.speedStep/2)) {
-        table.update(speed, heel, smoothedGroundSpeed, assumeCurrent ? smoothedCurrent : noCurrent, smoothedBoatSpeed, theta);
-      }
-
-      // calculate residual
-      residual.copyFrom(smoothedGroundSpeed);
-      boatSpeedRefGround.copyFrom(correctedBoatSpeed);
-      boatSpeedRefGround.rotate(theta);
-      residual.substract(boatSpeedRefGround);
-      residual.substract(smoothedCurrent);
-
-      // Save correction table periodically 
-      if ( new Date() - lastSave > 5 * 60 * 1000) {
-        lastSave = saveTable(_settings, table);
-      }
-
-      function situationIsStable(theta, COG) {
-        // update stabilities
-        headingStability.update(theta);
-        COGStability.update(COG);
-        let stable = true;
-        if (headingStability.range > SI.fromDegrees(5)) {
-          smoothedHeading.setDisplayAttribute("unstable", true);
-          stable = false;
-        }
-        else {
-          smoothedHeading.setDisplayAttribute("unstable", false);
-        }
-        if (COGStability.range > SI.fromDegrees(5)) {
-          smoothedGroundSpeed.setDisplayAttribute("unstable", true);
-          stable = false;
-        }
-        else {
-          smoothedGroundSpeed.setDisplayAttribute("unstable", false);
-        }
-        return stable;
-      }
-
-    }
-
-
-
-
-
-    // Make sure the table matches the settings
-    function enforceConsistancy(row, col) {
-      // function is bugged due to IS units vs knots and degrees
-      if (!_settings?.correctionTable) return false;
-      table = _settings.correctionTable;
-      if (!table) return false;
-      if (!table.row) return false;
-      if (table.row.min != row.min) return false;
-      if (table.row.max != row.max) return false;
-      if (table.row.step != row.step) return false;
-      if (table.col.min != col.min) return false;
-      if (table.col.max != col.max) return false;
-      if (table.col.step != col.step) return false;
-      return true;
-    }
-
-    function loadTable(options) {
-      const row = { min: 0, max: SI.fromKnots(options.maxSpeed), step: SI.fromKnots(options.speedStep) };
-      const col = { min: -SI.fromDegrees(options.maxHeel), max: SI.fromDegrees(options.maxHeel), step: SI.fromDegrees(options.heelStep) };
-      let table;
-      const stability = (options.stability !== undefined) ? options.stability : 6;
-      if (enforceConsistancy(row, col) && !options.startWithNewTable) {
-        table = CorrectionTable.fromJSON(options.correctionTable, stability);
-        app.debug("Correction table loaded");
-        lastSave = new Date();
-      }
-      else {
-        table = new CorrectionTable("correctionTable", row, col, stability);
-        app.debug("Correction table created");
-        // doStartFresh is not user-settable, so no need to reset it here
-        options.startWithNewTable = false;
-        lastSave = saveTable(options, table);
-      }
-      table.setDisplayAttributes({ label: "correction table" });
-      return table;
-    }
-
-
-    // Mode-dependent options are now managed in modeOptions, not user-settable
-    function loadPresets(options) {
-      const modeEnum = plugin.schema.properties.mode.enum;
-      app.debug("Loading presests for mode: " + options.mode);
-      const modeOptions = {};
-      switch (modeEnum.indexOf(options.mode)) {
-        case -1:
-          app.debug("Invalid mode");
-          app.debug(options);
-          //options.mode = modeEnum[2];
-          break;
-        case 0:
-          // new table, no current
-          modeOptions.doStartFresh = true;
-          modeOptions.updateCorrectionTable = true;
-          modeOptions.estimateBoatSpeed = false;
-          modeOptions.assumeCurrent = false;
-          modeOptions.estimateCurrent = false;
-          modeOptions.correctionStability = 5;
-          modeOptions.mode = modeEnum[2];
-          break;
-        case 1:
-          // new table, with current
-          modeOptions.doStartFresh = true;
-          modeOptions.updateCorrectionTable = true;
-          modeOptions.estimateBoatSpeed = false;
-          modeOptions.assumeCurrent = true;
-          modeOptions.estimateCurrent = false;
-          modeOptions.correctionStability = 5;
-          modeOptions.currentStability = 7;
-          modeOptions.mode = modeEnum[3];
-          break;
-        case 2:
-          // fresh table, no current
-          modeOptions.doStartFresh = false;
-          modeOptions.updateCorrectionTable = true;
-          modeOptions.estimateBoatSpeed = false;
-          modeOptions.assumeCurrent = false;
-          modeOptions.estimateCurrent = false;
-          modeOptions.correctionStability = 6;
-          break;
-        case 3:
-          // fresh table, with current
-          modeOptions.doStartFresh = false;
-          modeOptions.updateCorrectionTable = true;
-          modeOptions.estimateBoatSpeed = false;
-          modeOptions.assumeCurrent = true;
-          modeOptions.estimateCurrent = false;
-          modeOptions.correctionStability = 6;
-          modeOptions.currentStability = 6;
-          break;
-        case 4:
-          // mature table, no current
-          modeOptions.doStartFresh = false;
-          modeOptions.updateCorrectionTable = true;
-          modeOptions.estimateBoatSpeed = true;
-          modeOptions.assumeCurrent = false;
-          modeOptions.estimateCurrent = false;
-          modeOptions.correctionStability = 10;
-          break;
-        case 5:
-          // mature table, with current
-          modeOptions.doStartFresh = false;
-          modeOptions.updateCorrectionTable = true;
-          modeOptions.estimateBoatSpeed = true;
-          modeOptions.assumeCurrent = true;
-          modeOptions.estimateCurrent = true;
-          modeOptions.correctionStability = 10;
-          modeOptions.currentStability = 3;
-          break;
-        case 6:
-          // locked table
-          modeOptions.doStartFresh = false;
-          modeOptions.updateCorrectionTable = false;
-          modeOptions.estimateBoatSpeed = true;
-          modeOptions.assumeCurrent = true;
-          modeOptions.estimateCurrent = true;
-          modeOptions.currentStability = 2;
-          break;
-        case 7:
-          // all manual configuration;
-          break;
-      }
-      // Use modeOptions throughout the code instead of options for these fields
-      return modeOptions;
-    }
-
-    // compare floats
-    function isEqual(a, b) {
-      const TOLERANCE = 1e-5;
-      if (Math.abs(a - b) < TOLERANCE) {
-        return true;
-      }
-      return false;
-    }
   }
-
 
   plugin.stop = () => {
     return new Promise((resolve, reject) => {
       try {
-        //corrTable.save(app);
-        if (corrTable != null) {
-          lastSave = saveTable(_settings, corrTable);
+        if (table != null) {
+          saveTable(_settings, table);
         }
 
         smoothedHeading = smoothedHeading?.terminate(app);
@@ -661,5 +415,161 @@ module.exports = function (app) {
       }
     });
   };
+
+ 
+  /**
+   * Estimates and applies corrections to boat speed, leeway, and current.
+   *
+   * This function uses the current attitude, boat speed, and heading to compute a correction
+   * vector from the correction table, applies it to the observed boat speed, and sends the
+   * corrected value. If the vessel is well underway, it also estimates the current vector
+   * by comparing the corrected boat speed (rotated to heading) with the ground speed.
+   *
+   * @param {boolean} wellUnderway - True if the vessel is considered underway and current estimation should be performed.
+   */
+  function correct(wellUnderway) {
+    // prepare iteration
+    const heel = rawAttitude.value.roll;
+    const speed = rawBoatSpeed.magnitude;
+    const theta = rawHeading.value;
+    //app.debug(`Heel: ${SI.toDegrees(heel).toFixed(1)}°, Speed: ${SI.toKnots(speed).toFixed(2)} kn, Heading: ${SI.toDegrees(theta).toFixed(1)}°`);
+    if (!Number.isFinite(heel) || !Number.isFinite(speed) || !Number.isFinite(theta)) {
+      //app.debug("Invalid input data");
+      return;
+    }
+
+    correctedBoatSpeed.copyFrom(rawBoatSpeed);
+    speedCorrection.setVectorValue({ x: 0, y: 0 }) ;
+    if (speed > 0) {
+      const { correction, variance } = table.getCorrection(speed, heel);
+      speedCorrection.setVectorValue(correction, variance);
+      correctedBoatSpeed.add(speedCorrection);
+    }
+    Polar.send(app, plugin.id, [correctedBoatSpeed]);
+    // estimate current
+    if (wellUnderway) {
+      boatSpeedRefGround.copyFrom(correctedBoatSpeed);
+      boatSpeedRefGround.rotate(theta);
+      rawCurrent.copyFrom(rawGroundSpeed);
+      rawCurrent.substract(boatSpeedRefGround);
+      smoothedCurrent.sample();
+    }
+    PolarSmoother.send(app, plugin.id, [smoothedCurrent]);
+  }
+
+  /**
+   * Updates the correction table and calculates the residual error.
+   *
+   * This function uses the current smoothed attitude, boat speed, and heading to update the correction table
+   * if the boat speed exceeds the specified minimum. It also calculates the residual between the measured ground speed
+   * and the expected ground speed (corrected boat speed plus current). The correction table is periodically saved.
+   *
+   * @param {boolean} [assumeCurrent=false] - If true, uses the smoothed current for correction; otherwise, assumes no current.
+   * @param {number} [minSpeed=0] - The minimum speed threshold (in SI units) required to update the correction table.
+   */
+  function updateTable(assumeCurrent = false, minSpeed = 0) {
+    // prepare iteration
+    const heel = smoothedAttitude.value.roll;
+    const speed = smoothedBoatSpeed.magnitude;
+    const theta = smoothedHeading.value;
+
+    if (!Number.isFinite(heel) || !Number.isFinite(speed) || !Number.isFinite(theta)) return;
+
+    // update correction table
+    if (speed > minSpeed) {
+      table.update(speed, heel, smoothedGroundSpeed, assumeCurrent ? smoothedCurrent : noCurrent, smoothedBoatSpeed, theta);
+    }
+
+    // calculate residual
+    residual.copyFrom(smoothedGroundSpeed);
+    boatSpeedRefGround.copyFrom(correctedBoatSpeed);
+    boatSpeedRefGround.rotate(theta);
+    residual.substract(boatSpeedRefGround);
+    residual.substract(smoothedCurrent);
+
+    // Save correction table periodically 
+    if (new Date() - lastSave > 5 * 60 * 1000) {
+      lastSave = saveTable(_settings, table);
+    }
+
+
+  }
+  
+
+  /**
+   * Checks if the correction table in settings matches the expected row and column configuration.
+   *
+   * This function compares the min, max, and step values of the row and column definitions
+   * in the current correction table against the provided row and col objects. Returns true
+   * if all values match, otherwise false. If the table is missing or not properly structured,
+   * returns false.
+   *
+   * @param {Object} row - The expected row configuration ({ min, max, step }).
+   * @param {Object} col - The expected column configuration ({ min, max, step }).
+   * @returns {boolean} True if the table matches the configuration, false otherwise.
+   */
+  function enforceConsistancy(row, col) {
+    if (!_settings?.correctionTable) return false;
+    table = _settings.correctionTable;
+    if (!table) return false;
+    if (!table.row) return false;
+    if (table.row.min != row.min) return false;
+    if (table.row.max != row.max) return false;
+    if (table.row.step != row.step) return false;
+    if (table.col.min != col.min) return false;
+    if (table.col.max != col.max) return false;
+    if (table.col.step != col.step) return false;
+    return true;
+  }
+
+  /**
+   * Loads or creates a correction table based on the provided options.
+   *
+   * This function checks if the correction table in the options matches the expected row and column configuration.
+   * If so, it loads the table from JSON; otherwise, it creates a new correction table with the specified parameters.
+   * The table is labeled and, if newly created, saved to the plugin options.
+   *
+   * @param {Object} options - The plugin options containing correction table settings and parameters.
+   * @returns {CorrectionTable} The loaded or newly created CorrectionTable instance.
+   */
+  function loadTable(options) {
+    const row = { min: 0, max: SI.fromKnots(options.maxSpeed), step: SI.fromKnots(options.speedStep) };
+    const col = { min: -SI.fromDegrees(options.maxHeel), max: SI.fromDegrees(options.maxHeel), step: SI.fromDegrees(options.heelStep) };
+    let table;
+    const stability = (options.stability !== undefined) ? options.stability : 6;
+    if (enforceConsistancy(row, col) && !options.startWithNewTable) {
+      table = CorrectionTable.fromJSON(options.correctionTable, stability);
+      app.debug("Correction table loaded");
+      lastSave = new Date();
+    }
+    else {
+      table = new CorrectionTable("correctionTable", row, col, stability);
+      app.debug("Correction table created");
+      // doStartFresh is not user-settable, so no need to reset it here
+      options.startWithNewTable = false;
+      lastSave = saveTable(options, table);
+    }
+    table.setDisplayAttributes({ label: "correction table" });
+    return table;
+  }
+
+
+  /**
+   * Saves the correction table to the plugin options and logs the save event.
+   *
+   * This function serializes the provided correction table, updates the options object,
+   * and triggers the plugin's save mechanism. It returns the current date/time to indicate
+   * when the save occurred.
+   *
+   * @param {Object} options - The plugin options object to update.
+   * @param {CorrectionTable} correctionTable - The correction table instance to save.
+   * @returns {Date} The date and time when the table was saved.
+   */
+  function saveTable(options, correctionTable) {
+    options.correctionTable = correctionTable.toJSON();
+    app.savePluginOptions(options, () => { app.debug('Correction table saved') });
+    return new Date();
+  }
+
   return plugin;
 };
