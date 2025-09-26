@@ -92,7 +92,7 @@ class TableRenderer {
       }
       if (value.displayAttributes && value.displayAttributes.selected) {
         cell.classList.add('selectedCell');
-        console.log(value);
+        //console.log(value);
       }
       if (value.displayAttributes && value.displayAttributes.normWeight) {
         const weight = Math.min(1, value.displayAttributes.normWeight);

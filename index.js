@@ -1,12 +1,25 @@
-const { SI, MessageHandler, MessageHandlerDamped, Polar, Reporter, BaseSmoother, MovingAverageSmoother, KalmanSmoother, PolarSmoother, createSmoothedPolar, createSmoothedHandler } = require('signalkutilities');
+const {
+  SmoothedHeading,
+  SmoothedAttitude,
+  SmoothedSpeedThroughWater,
+  SmoothedGroundSpeed,
+  SI,
+  MessageHandler,
+  Polar,
+  Reporter,
+  BaseSmoother,
+  MovingAverageSmoother,
+  KalmanSmoother,
+  PolarSmoother,
+  createSmoothedPolar,
+  createSmoothedHandler
+} = require('signalkutilities');
 
 const { CorrectionTable } = require('./correctionTable.js');
 
 module.exports = function (app) {
 
-  let _settings = {};
   let isRunning = false;
-  let lastSave = null;
   let smoothedHeading = null;
   let stability = null;
   let smoothedAttitude = null;
@@ -204,43 +217,18 @@ module.exports = function (app) {
   plugin.start = (settings) => {
     app.setPluginStatus("Starting");
     app.debug("Starting");
-  
-    // get settings to a wider scope so it can be used in the stop function
-    _settings = settings;
-    let smootherOptions = { timeConstant: 1, processVariance: 1, measurementVariance: 20, timeSpan: 5 };
     table = loadTable(settings);
 
     //#region Handler and Polar Initialization
-    // heading
-    smoothedHeading = createSmoothedHandler({
-      id: "heading",
-      path: "navigation.headingTrue",
-      source: settings.headingSource,
-      subscribe: true,
-      app,
-      pluginId: plugin.id,
-      SmootherClass: MovingAverageSmoother,
-      smootherOptions: smootherOptions,
-      displayAttributes: { label: "Heading (smoothed)" },
-    });
-    rawHeading = smoothedHeading.handler;
-    rawHeading.setDisplayAttributes({ label: "Heading" });
+    let smootherOptions = { timeConstant: 1, processVariance: 1, measurementVariance: 20, timeSpan: 5 };
 
+    // heading
+    smoothedHeading = new SmoothedHeading(app, plugin.id, settings.headingSource, true, MovingAverageSmoother, smootherOptions);
+    rawHeading = smoothedHeading.polar.angleHandler;
 
     //attitude
-    smoothedAttitude = createSmoothedHandler({
-      id: "attitude",
-      path: "navigation.attitude",
-      source: settings.attitudeSource,
-      subscribe: true,
-      app,
-      pluginId: plugin.id,
-      SmootherClass: MovingAverageSmoother,
-      smootherOptions: smootherOptions,
-      displayAttributes: { label: "Attitude (smoothed)" }
-    });
+    smoothedAttitude = new SmoothedAttitude(app, plugin.id, settings.attitudeSource, true, MovingAverageSmoother, smootherOptions);
     rawAttitude = smoothedAttitude.handler;
-    rawAttitude.setDisplayAttributes({ label: "Attitude" });
 
 
     // current
@@ -271,52 +259,16 @@ module.exports = function (app) {
     noCurrent.ySmoother.reset(0,0);
 
     // boat speed
-    smoothedBoatSpeed = createSmoothedPolar({
-      id: "boatSpeed",
-      pathMagnitude: "navigation.speedThroughWater",
-      pathAngle: null,
-      subscribe: true,
-      sourceMagnitude: settings.boatSpeedSource,
-      sourceAngle: settings.boatSpeedSource,
-      app,
-      pluginId: plugin.id,
-      SmootherClass: MovingAverageSmoother,
-      smootherOptions: smootherOptions,
-      displayAttributes: { label: "Observed boat Speed (smoothed)", plane: "Boat" },
-      passOn: !_settings.preventDuplication,
-    });
+    smoothedBoatSpeed = new SmoothedSpeedThroughWater(app, plugin.id, settings.boatSpeedSource, true, MovingAverageSmoother, smootherOptions, !settings.preventDuplication);
     rawBoatSpeed = smoothedBoatSpeed.polar;
-    rawBoatSpeed.setDisplayAttributes({ label: "Observed boat Speed", plane: "Boat" });
-   
     correctedBoatSpeed = new Polar("correctedBoatSpeed", "navigation.speedThroughWater", "navigation.leewayAngle");
     correctedBoatSpeed.setDisplayAttributes({ label: "corrected boat speed", plane: "Boat" });
- 
-
-    // TODO: Add navigation.speedThroughWaterTransverse and navigation.speedThroughWaterLongitudinal
-
     boatSpeedRefGround = new Polar("boatSpeedRefGround");
     boatSpeedRefGround.setDisplayAttributes("Boat speed over ground", "Ground");
-
+ 
     // ground speed
-    smoothedGroundSpeed = createSmoothedPolar({
-      id: "groundSpeed",
-      pathMagnitude: "navigation.speedOverGround",
-      pathAngle: "navigation.courseOverGroundTrue",
-      subscribe: true,
-      sourceMagnitude: settings.SOGSource,
-      sourceAngle: settings.COGSource,
-      app,
-      pluginId: plugin.id,
-      SmootherClass: MovingAverageSmoother,
-      smootherOptions: smootherOptions,
-      displayAttributes: { label: "Ground Speed (smoothed)", plane: "Ground" },
-      passOn: true,
-      angleRange: '0to2pi'
-    });
+    smoothedGroundSpeed = new SmoothedGroundSpeed(app, plugin.id, settings.SOGSource, true, MovingAverageSmoother, smootherOptions, !settings.preventDuplication);
     rawGroundSpeed = smoothedGroundSpeed.polar;
-    rawGroundSpeed.setDisplayAttributes({ label: "Ground Speed", plane: "Ground" });
-
-
 
     // correction vector
     speedCorrection = new Polar("speedCorrection");
@@ -374,21 +326,26 @@ module.exports = function (app) {
     app.setPluginStatus("Running");
     app.debug("Running");
 
+    let lastSave = 0;
     smoothedBoatSpeed.onChange = () => {
-      const wellUnderway = started < new Date() - smootherOptions.timeSpan * 1000;
+      const wellUnderway = started < new Date() - 60 * 1000;
       const minSpeed = SI.fromKnots(settings.speedStep / 2);
       if (settings.estimateBoatSpeed) correct(wellUnderway);
-      if (settings.updateCorrectionTable && wellUnderway) updateTable(settings.assumeCurrent, minSpeed);
+      if (settings.updateCorrectionTable && wellUnderway) {
+        updateTable(settings.assumeCurrent, minSpeed);
+        // Save correction table periodically 
+        const now = new Date();
+        if (now - lastSave > 5 * 1000) {
+          saveTable(settings, table);
+          lastSave = now;
+        }
+      }
     };
   }
 
   plugin.stop = () => {
     return new Promise((resolve, reject) => {
       try {
-        if (table != null) {
-          saveTable(_settings, table);
-        }
-
         smoothedHeading = smoothedHeading?.terminate(app);
         stability = stability?.terminate(app);
         smoothedAttitude = smoothedAttitude?.terminate(app);
@@ -416,8 +373,7 @@ module.exports = function (app) {
     });
   };
 
- 
-  /**
+   /**
    * Estimates and applies corrections to boat speed, leeway, and current.
    *
    * This function uses the current attitude, boat speed, and heading to compute a correction
@@ -487,14 +443,7 @@ module.exports = function (app) {
     residual.substract(boatSpeedRefGround);
     residual.substract(smoothedCurrent);
 
-    // Save correction table periodically 
-    if (new Date() - lastSave > 5 * 60 * 1000) {
-      lastSave = saveTable(_settings, table);
-    }
-
-
   }
-  
 
   /**
    * Checks if the correction table in settings matches the expected row and column configuration.
@@ -508,9 +457,9 @@ module.exports = function (app) {
    * @param {Object} col - The expected column configuration ({ min, max, step }).
    * @returns {boolean} True if the table matches the configuration, false otherwise.
    */
-  function enforceConsistancy(row, col) {
-    if (!_settings?.correctionTable) return false;
-    table = _settings.correctionTable;
+  function enforceConsistancy(options, row, col) {
+    if (!options?.correctionTable) return false;
+    table = options.correctionTable;
     if (!table) return false;
     if (!table.row) return false;
     if (table.row.min != row.min) return false;
@@ -537,22 +486,20 @@ module.exports = function (app) {
     const col = { min: -SI.fromDegrees(options.maxHeel), max: SI.fromDegrees(options.maxHeel), step: SI.fromDegrees(options.heelStep) };
     let table;
     const stability = (options.stability !== undefined) ? options.stability : 6;
-    if (enforceConsistancy(row, col) && !options.startWithNewTable) {
+    if (enforceConsistancy(options, row, col) && !options.startWithNewTable) {
       table = CorrectionTable.fromJSON(options.correctionTable, stability);
       app.debug("Correction table loaded");
-      lastSave = new Date();
     }
     else {
       table = new CorrectionTable("correctionTable", row, col, stability);
       app.debug("Correction table created");
       // doStartFresh is not user-settable, so no need to reset it here
       options.startWithNewTable = false;
-      lastSave = saveTable(options, table);
+      saveTable(options, table);
     }
     table.setDisplayAttributes({ label: "correction table" });
     return table;
   }
-
 
   /**
    * Saves the correction table to the plugin options and logs the save event.
@@ -566,9 +513,8 @@ module.exports = function (app) {
    * @returns {Date} The date and time when the table was saved.
    */
   function saveTable(options, correctionTable) {
-    options.correctionTable = correctionTable.toJSON();
-    app.savePluginOptions(options, () => { app.debug('Correction table saved') });
-    return new Date();
+  options.correctionTable = correctionTable.toJSON();
+  app.savePluginOptions(options, () => { /*app.debug("Correction table saved")*/; });
   }
 
   return plugin;
