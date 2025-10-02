@@ -1,85 +1,175 @@
-# **Speed Correction & Current Estimation Plugin**
+# Speed Correction & Current Estimation Plugin
 
-## **Overview**
-This SignalK plugin estimates **corrected speed through water**, **leeway**, and **water current** in real-time using advanced filter techniques. The plugin continuously refines its estimates based on vessel speed, heading, ground speed, and heel angle.
+## Overview
+This SignalK plugin estimates **corrected speed through water**, **leeway**, and **water current (drift)** in real-time using adaptive sensor fusion and statistical filtering. It continuously refines its estimates based on vessel speed, heading, ground speed, and heel angle. Its primary goal is to significantly improve paddle wheel speed (navigation.speedThroughWater), where raw errors of 10% or more are common. It does this automatically from real-world observations—no manual calibration required. Leeway (navigation.leewayAngle) is derived from observed dynamics rather than formulas, and current is estimated only after speed is corrected, using a slowly adapting filter.
 
-### **Key Features**
-- ✅ Real-time estimation of vessel speed (STW).
-- ✅ Real-time estimation of leeway.
-- ✅ Real-time estimation of water current (both speed and direction).
-- ✅ Adaptive learning: The plugin refines corrections over time.
-- ✅ A web app to provide real-time insights into the plugin's operation.
-- ✅ Use of Kalman filters for optimal estimations of the correction table, boat speed, and current.
-- ✅ A user-configurable 2D correction table for speed errors based on heel and speed.
+## Quick Start
+1. Install / enable the plugin in the Signal K Server admin UI.
+2. Specify the dimensions of the correction table in the plugin settings.
+3. Enable the plugin.
+4. Open the plugin's WebApp from the Signal K App list.
+5. Watch the corrected speed, leeway, and current fields begin populating as data arrives. Initial stabilization may take some sailing at varying speeds and heel angles.
 
-## **Introduction**
-The plugin is based on the idea that a vessel's speed sensor is imperfect and can be corrected. Speed sensors, most often paddle wheels, are imperfect for two reasons:
-1. **Measurement Precision**: The water flow over the hull influences the paddle wheel's measurement.
-2. **Leeway**: A paddle wheel does not measure lateral speed or leeway, which is crucial for sailing vessels.
+## Requirements & Data Inputs
+The plugin automatically starts collecting and learning once enabled, but waits the first ~60 seconds before producing estimates to stabilize.
 
-A GPS sensor provides the vessel's speed over ground, which differs from the paddle wheel's speed through water when there is current. The GPS sensor also has its imperfections.
+Required paths:
+- navigation.speedThroughWater (raw paddle wheel speed)
+- navigation.speedOverGround
+- navigation.courseOverGroundTrue (true)
+- navigation.headingTrue (true)
+- navigation.attitude
 
-In theory, one could use the GPS sensor to estimate the paddle wheel's error. However, estimating the paddle wheel's error requires knowing the water current, which cannot be measured directly from a floating vessel. Given enough measurements, one could estimate both current and paddle wheel error.
+## Output & Published Paths
+After the initial ~60 second stabilization period the plugin starts sending the following Signal K paths:
 
-The plugin estimates both current and sensor error simultaneously. Using these estimations, the plugin corrects boat speed, estimates leeway, and estimates the current in real-time.
+| Purpose | Path(s) | Units | Notes |
+|---------|---------|-------|-------|
+| Corrected speed through water (magnitude) | navigation.speedThroughWater | m/s | navigation.speedThroughWater. Source attribute distinguishes plugin value from the original sensor. |
+| Leeway angle | navigation.leewayAngle | rad | Angle (starboard positive) associated with corrected STW vector. |
+| Water current speed | self.environment.current.drift | m/s | Magnitude of estimated water current over ground. |
+| Water current set (direction) | self.environment.current.setTrue | rad | True direction (set) the current flows toward. |
 
-### **Assumptions**
-- The paddle wheel's error depends on boat speed and heel angle, and it may change slowly over time.
-- The speed and direction of the current change slowly and gradually.
-- The vessel changes direction regularly.
+Boat speed overwrite / duplication behavior:
+- When the setting "Prevent duplication of boat speed" = true (default): plugin overwrites navigation.speedThroughWater with corrected value.
+- When false: both raw and corrected updates exist under navigation.speedThroughWater with distinct source attributes (viewable in deltas / data browser) allowing comparison.
 
-## **Configuration of the Plugin**
+Current vector representation: Published as polar (drift + set). Set angle is the direction the water moves toward (oceanographic convention). Verify tooling expectations if it assumes FROM direction.
 
-### **1. Plugin Mode**
-The plugin has different modes optimized for various circumstances. If there is no (or very little) current, use one of the no-current modes for the best paddle wheel corrections. If there is current, select one of the modes that account for current.
 
-You must start with a mode that creates a new correction table. These modes use the specified dimensions to create an empty correction table. Once the table is created, the plugin will automatically switch to one of the fresh correction table modes. Be careful when selecting to start with a new correction table, as the previous table will be permanently deleted.
+## The correction table
+At the heart of the plugin is a correction table that provides a correction vector based on observed boat speed and heel. The correction table is built and maintained by the plugin itself, no user input is required. The plugin can even build a correction table on tidal waters, although this feature is experimental and may not work properly under all circumstances.
 
-The modes that assume a fresh correction table are optimized to estimate valid correction values quickly. Corrections are not applied, and no leeway or current is estimated. Once the correction table has matured, select one of the mature correction table modes. In these modes, corrections are calculated and updated conservatively, and corrections are applied to the boat speed. Leeway and, optionally, current are estimated.
+Every time the paddle wheel provides a measurement the plugin does two things. First it corrects boat speed and estimates leeway and current using the correction table. Second, using boat speed, ground speed and current estimation the correction table is updated. So the correction table is used and updated simultaneously.
 
-If circumstances are very dynamic (e.g., unstable wind, currents, or big waves), you can lock the correction table. Corrections will no longer be updated but will be applied.
+## Configuration
+All settings are managed from the Signal K Server plugin configuration UI.
 
-| Mode | Updates Correction Table | Assume Current | Correct Boat Speed | Estimate Leeway | Estimate Current |
-|------|--------------------------|----------------|---------------------|-----------------|------------------|
-| Start with new correction table, no current | Yes, starting with a new one | No | No | No | No |
-| Start with new correction table, with current | Yes, starting with a new one | Yes | No | No | No |
-| Fresh correction table, no current | Fast | No | No | No | No |
-| Fresh correction table, with current | Fast | Yes | No | No | No |
-| Mature correction table, no current | Slow | No | Yes | Yes | No |
-| Mature correction table, with current | Slow | Yes | Yes | Yes | Yes |
-| Locked correction table | No | Yes | Yes | Yes | Yes |
+### Core
+| Setting | Default | Description | When to Change |
+|---------|---------|-------------|----------------|
+| Estimate Boat Speed | false | Enables speed correction, leeway and current estimation. | Normally on. |
+| Update Correction Table | true | Learns / refines correction table. | Temporarily disable in abnormal conditions (heavy seas, abnormal current). |
+| Start with new table | false | Discards existing table and starts fresh. | Only if you want to start all over with correcting. |
 
-### **2. Correction Table**
-The other parameters for the plugin deal with the correction table. These include step size for heel and speed, and maximum heel and speed.
-- The correction table should cover the vessel's normal dynamic range. Set maximum speed and maximum heel to values the vessel would typically achieve. Avoid setting values for exceptional circumstances, as this may result in unreliable estimations.
-- Choose the step size carefully. Too small step sizes may lead to insufficient observations for a good estimation, while too large step sizes may result in imprecise corrections.
-- Changing any table dimensions will result in the loss of all existing estimations.
+### Learning & Stability
+| Setting | Default | Description | Guidance |
+|---------|---------|-------------|----------|
+| Correction Table Stability | 7 | Higher = slower changes (more conservative). | Increase once table broadly populated; lower briefly if you think the sensor error has changed. |
+| Assume Current (experimental) | false | Learns table while assuming a current may be present. | Enable cautiously on tidal waters. |
 
-## **WebApp**
-The plugin comes with a WebApp that allows you to view the correction table and see the estimations in real-time. The WebApp can be launched from the SignalK server. The WebApp:
-- Graphically shows the boat speeds (observed and estimated), ground speed, current, and correction.
-- Displays incoming deltas.
-- Displays the boat speeds (observed and estimated), ground speed, current, and correction.
-- Displays the content of the correction table in either Cartesian values or polar coordinates.
-- Displays the plugin configuration and internal settings.
+### Table Definition
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Step size for speed | 1 kn | Speed increment for table rows. |
+| Maximum speed in table | 9 kn | Upper speed coverage. |
+| Step size for heel | 8° | Heel increment for table columns (positive & negative). |
+| Maximum heel in table | 32° | Max absolute heel covered (± value). |
 
-The graphical representation of the speed vectors, current vector, and correction vector can be embedded in KIP displays using the path `/speedandcurrent/vectors.html`.
+### Data Sources (optional overrides)
+| Setting | Description |
+|---------|-------------|
+| Heading Source | Force a specific source for navigation.headingTrue. |
+| Boat Speed Source | Force a specific source for navigation.speedThroughWater. |
+| Course over ground (COG Source) | Source for navigation.courseOverGroundTrue. |
+| Ground Speed Source (SOG Source) | Source for navigation.speedOverGround. |
+| Attitude Source | Source for navigation.attitude (roll/heel). |
 
----
+If there are multiple sources available for a single path, one should specify the preferred source for the plugin. Alternatively, one could set source priorities in the signalK server settings (under data sources).
 
-## **How It Works**
+### Output Behavior
+| Setting | Default | Description | Notes |
+|---------|---------|-------------|-------|
+| Prevent duplication of boat speed | true | Overwrites navigation.speedThroughWater with corrected value. | Disable to compare raw vs corrected via distinct source attributes under same path. |
 
-### **1. Speed Correction Model**
-- Vessel speed errors depend on **heel** and **speed** and are assumed constant for a given speed and heel angle.
-- A correction table stores speed errors for steps in speed and heel angle.
-- Each cell in the correction table contains a **Kalman filter** that updates speed corrections with new measurements.
-- The speed measurement is corrected by subtracting the correction from the correction table. The correction is **interpolated** based on nearby table cells, weighted by the uncertainty provided by the Kalman filter.
+### Tips
+1. Be patient with the correction table. Its corrections will improve over time. 
+2. Once corrections stabilize, raise Stability to lock in values.
+3. Freeze learning (disable Update Correction Table) before performance-sensitive events (e.g., racing) or in unstable conditions (waves, currents).
+4. Changing table parameters will destroy the current table.
+5. After paddle wheel cleaning or if fouling suspected: temporarily LOWER Stability (e.g., from 7 → 5) to let corrections adapt, then raise again; do not rebuild unless the grid itself must change.
+6. The plugin will always estimate currents when Estimate boat speed is enabled. Even when Assume currents is disabled, as this setting is only used in updating the correction table.
+
+## Persistence & Data Storage
+The correction table is persisted inside the plugin configuration (saved approximately every 5 seconds while learning). It is reloaded automatically on restart.
+
+Safety & backup:
+- If you have a well-populated table, consider copying the plugin configuration JSON (via server backup) before major changes.
+
+## Experimental Note
+The "Assume Current" option is experimental. It works best on a stable correction table as it takes time for the plugin to properly distinguish currents from paddle wheel eerors. 
+
+## WebApp Usage Guide
+Open via Signal K Server: Apps → Speed and current.
+
+### Layout & Elements
+| Element | What You See | Notes |
+|---------|--------------|-------|
+| Graphical vector panel | Heading, raw & corrected boat speed, ground speed, current, correction, residual | Drawn with consistent color coding (see below). |
+|Deltas| the different inputs and outputs to the plugin along with their uncertainty (trace)| For some paths also smoothed values are shown. The smoothed values are used to update the correction table| 
+| Correction table grid | 2D heel (columns) × speed (rows) cells containing correction vectors | Displays interpolated usage & last-updated cell highlighting. |
+
+- Labels and graphical vectors use corresponding colors.
+- Green text (selectedCell): the most recently updated table cell.
+- Blue background shading: cells contributing to the current interpolation. Deeper blue = higher interpolation weight.
+- Empty cells: not yet populated by learning (appear without vector magnitude / direction details initially).
+- Trace is an indication of the uncertainty of the measurement or estimatin. The higher the Trace the less reliable the corresponding value is.
+
+### The menu
+The menu allows you to:
+- select the unit of choice for speed and angle
+- select a polar(magnitude + angle)  or cartesion (x and y speed) based representation of the correction table.
+- pause the regular updates
+
+### Interpreting Vectors
+- Corrected Speed vs Raw: Convergence occurs when their magnitudes diverge by a stable, plausible bias and the correction vector stops oscillating wildly. 
+- The corrected speed includes leeway, it therefore is not aligned with the ships axis.
+- Residual: This is the part of the observed speed that is not explained by the sensor error or current estimation. Should trend toward small values as learning progresses.
+
+### Correction Table Health Checklist
+- Leeway ≈ 0 at zero heel; increases logically with heel. Non‑zero leeway at zero heel may indicate heading offset.
+- Correction vectors should be visually consistent with adjacent cells (direction & magnitude trend smoothly).
+- Port / starboard symmetry: similar magnitudes at ± matching heel angles. Large asymmetry can indicate paddle wheel misalignment with the longitudal axis of the boat or off‑center mounting.
+
+
+
+## How It Works
+
+
+### 1. Speed Correction
+- Vessel speed errors depend on **heel** and **speed** and are treated as locally constant within grid cells.
+- The correction table stores a vector (magnitude & direction of sensor error) per (speed, heel) cell.
+- A correction vector is computed by weighting (interpolation) of the nearest populated cells.
+- The corrected speed-through-water vector = raw STW vector + correction vector (sign chosen so magnitude bias is reduced).
+
+### 2. Leeway Estimation
+- Leeway is derived from the angular difference between the corrected STW direction and the hull axis / heading reference.
+
+### 3. Current Estimation
+- The water current is estimated as a **slowly changing** ground-plane vector.
+- A Kalman filter updates the current using residual between ground speed (GPS) and the heading-rotated corrected boat speed, weighted by estimated variances.
+- ![current estimation model](https://github.com/Asw1n/speedandcurrent/raw/main/currentModel.png)
+
+### 4. Correction Estimating
+- Each populated cell maintains its own lightweight Kalman filter.
+- For each incoming raw boat speed sample the instantaneous sensor error candidate is derived from boat speed, heel, heading, ground speed and (optionally) current.
+- That error sample updates the cell’s Kalman state (mean correction vector + variance).
+- Sensor and estimation variances are continuously updated; the displayed Trace in the webApp reflects confidence (higher = less reliable).
 - ![correction model](https://github.com/Asw1n/speedandcurrent/raw/main/correctionModel.png)
 
-### **2. Current Estimation Model**
-- The water current is estimated as a **slowly changing** vector.
-- A **Kalman filter** updates the current based on the difference between GPS speed and corrected speed.
-- ![current estimation model](https://github.com/Asw1n/speedandcurrent/raw/main/currentModel.png)
+## Glossary
+- Set: Direction the water current flows toward (true angle).
+- Drift: Magnitude (speed) of the water current over ground.
+- Leeway: Lateral angular difference between boat’s heading axis and its actual movement through water (starboard positive).
+- Residual: Remaining ground-speed vector difference after applying corrected STW and estimated current; indicator of modeling error and sensor noise.
+- Stability (setting): Damps rate of change in learned corrections; higher = slower adaptation.
+- Trace: Reported uncertainty indicator derived from internal variance (higher = less confidence in that vector/cell).
+- Kalman filter: An adaptive algorithm that estimates the true value of a variable (such as speed or current) by combining noisy measurements and prior estimates, updating both the value and its uncertainty over time. Used here to refine correction vectors (cell-by-cell) and current estimates .
+
+### Coordinate Frames
+- Boat Plane: Vectors relative to hull axis (used for raw & corrected STW, leeway angle computation).
+- Ground Plane: Vectors in earth-referenced frame (used for GPS ground speed, current, residual).
+
 
 ---
 

@@ -257,6 +257,7 @@ module.exports = function (app) {
     });
     noCurrent.xSmoother.reset(0,0);
     noCurrent.ySmoother.reset(0,0);
+    PolarSmoother.send(app, plugin.id, [noCurrent]);
 
     // boat speed
     smoothedBoatSpeed = new SmoothedSpeedThroughWater(app, plugin.id, settings.boatSpeedSource, true, MovingAverageSmoother, smootherOptions, !settings.preventDuplication);
