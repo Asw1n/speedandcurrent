@@ -49,6 +49,16 @@ export function handleTableStyleChange(value) {
   }
 }
 
+export function handleColorModeChange(value) {
+  if (tableRenderer && tableRenderer.setColorMode) {
+    tableRenderer.setColorMode(value);
+    // re-render immediately using last data if available
+    // fetchAndUpdateData will repaint next tick; do a quick repaint now if cached
+    // (Simplest approach: trigger fetch)
+    fetchAndUpdateData();
+  }
+}
+
 function cAngle(value) {
   value *= vAngle;
   return value.toFixed(dAngle);
@@ -69,32 +79,13 @@ function cartesian(correction, speed, heel) {
 
 function polar(correction, speed, heel) {
   if (speed == 0 || correction.N == 0) return null;
-  const factor = (correction.x + speed) / speed;
+  // Prefer server-provided values when available
+  const factor = Number.isFinite(correction.factor) ? correction.factor : (speed > 0 ? (correction.x + speed) / speed : 0);
+  const leewayRad = Number.isFinite(correction.leeway) ? correction.leeway : Math.atan2(correction.y, speed + correction.x);
   return ` <div><strong>factor:</strong> ${factor.toFixed(2)}</div>
-           <div><strong>leeway:</strong> ${cAngle(Math.atan2(correction.y, speed))}</div>
+           <div><strong>leeway:</strong> ${cAngle(leewayRad)}</div>
            <div><strong>N:</strong> ${correction.N}</div>
           `;
-}
-
-function formatCellX(value, speed, heel) {
-  if (value.N == 0) return null;
-  return cSpeed(value.x);
-}
-
-function formatCellY(value, speed, heel) {
-  if (value.N == 0) return null;
-  return Math.abs(cSpeed(value.y));
-}
-
-function formatCellXPolar(value, speed, heel) {
-  if (value.N == 0) return null;
-  const factor = (correction.x + speed) / speed;
-  return factor.toFixed(2);
-}
-
-function formatCellYPolar(value, speed, heel) {
-  if (value.N == 0) return null;
-  return Math.abs(cAngle(Math.atan2(value.y, speed)));
 }
 
 
@@ -232,7 +223,6 @@ function updateTable(data) {
   const tableContainer = document.getElementById('table-container');
   tableContainer.innerHTML = '';
     data.tables.forEach(table => {
-
     const tableElement = tableRenderer.render(table);
     tableContainer.appendChild(tableElement);
   });
@@ -290,6 +280,7 @@ tableRenderer.setRowHeaderFormat(cSpeed);
 window.handleSpeedUnitChange = handleSpeedUnitChange;
 window.handleAngleUnitChange = handleAngleUnitChange;
 window.handleTableStyleChange = handleTableStyleChange;
+window.handleColorModeChange = handleColorModeChange;
 window.toggleUpdates = toggleUpdates;
 
 

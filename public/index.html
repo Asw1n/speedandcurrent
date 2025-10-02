@@ -39,6 +39,18 @@
       </select>
     </div>
 
+    <!-- Color Mode Selection -->
+    <div class="menu-item dropdown">
+      <label for="color-mode">Color:</label>
+      <select id="color-mode" onchange="handleColorModeChange(this.value)">
+        <option value="none" selected>none</option>
+        <option value="weight">weight</option>
+        <option value="leeway">leeway</option>
+        <option value="factor">factor</option>
+        <option value="trace">trace</option>
+      </select>
+    </div>
+
 
     <!-- Pause Button -->
     <button id="toggle-updates" class="menu-item" onclick="toggleUpdates()">Pause</button>

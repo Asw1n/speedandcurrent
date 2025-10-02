@@ -103,8 +103,35 @@ class CorrectionTable extends Table2D{
       row: { min: this.min[0], max: this.max[0], step: this.step[0] },
       col: { min: this.min[1], max: this.max[1], step: this.step[1] },
       table: this.table.map(row =>
-        row.map(correction => {
+        row.map((correction, colIndex, rowArray) => {
           const cellReport = correction.report();
+          // Derive the bin coordinates from indices
+          const speedBin = this.min[0] + this.step[0] * this.table.indexOf(rowArray); // row axis represents speed
+          const heelBin = this.min[1] + this.step[1] * colIndex; // col axis represents heel
+          // Compute forward speed after longitudinal correction
+          const forward = speedBin + cellReport.x;
+          // Factor (forward relative to original speed); guard division by zero
+          const factor = speedBin > 0 ? forward / speedBin : null;
+          // Leeway angle based on sideways over forward; only if forward > 0
+          const leeway = (forward > 0 && cellReport.N > 0) ? Math.atan2(cellReport.y, forward) : null;
+          // Trace (custom definition): sqrt( cov_xx^2 + cov_yy^2 ) when covariance available and N>0
+          let trace = null;
+          if (cellReport.N > 0) {
+            try {
+              const cov = correction.covariance;
+              if (cov && Array.isArray(cov) && cov[0] && cov[1] && Number.isFinite(cov[0][0]) && Number.isFinite(cov[1][1])) {
+                const a = cov[0][0];
+                const d = cov[1][1];
+                trace = Math.sqrt(a*a + d*d);
+              }
+            } catch { /* silent */ }
+          }
+          cellReport.forward = forward;
+          cellReport.factor = factor;
+          cellReport.leeway = leeway;
+          cellReport.trace = trace;
+          cellReport.speedBin = speedBin;
+          cellReport.heelBin = heelBin;
           // Mark selected if this is the last updated cell
           cellReport.displayAttributes = {
             selected: correction === this.lastUpdatedCell

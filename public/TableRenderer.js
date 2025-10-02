@@ -3,8 +3,8 @@ class TableRenderer {
     this.formatColumnHeader = this.defaultDisplay;
     this.formatRowHeader = this.defaultDisplay;
     this.formatCell = this.defaultDisplay;
-    this.formatCellX = this.defaultDisplay;
-    this.formatCellY = this.defaultDisplay;
+    this.colorMode = 'none';
+    this.cachedExtents = {}; // store min/max per mode
   }
 
   setColumnHeaderFormat(columnHeader) {
@@ -19,18 +19,15 @@ class TableRenderer {
     cell != null ? this.formatCell = cell : this.formatCell = this.defaultDisplay;
   }
 
-  setCellFormatX(cellX) {
-    cellX != null ? this.formatCellX = cellX : this.formatCellX = this.defaultDisplay;
-  }
-
-  setCellFormatY(cellY) {
-    cellY != null ? this.formatCellY = cellY : this.formatCellY = this.defaultDisplay;
-  }
+  // Removed legacy X/Y specific formatting.
 
   render(data) {
     const {id, row, col, table, displayAttributes } = data;
     this.data = data;
     const label = displayAttributes && displayAttributes.label ? displayAttributes.label : "";
+
+    // Pre-compute extents for color modes (skip weight which is already normalized)
+    this.computeExtents(table);
     
     // Create a table element
     const tableElement = document.createElement('table');
@@ -94,15 +91,8 @@ class TableRenderer {
         cell.classList.add('selectedCell');
         //console.log(value);
       }
-      if (value.displayAttributes && value.displayAttributes.normWeight) {
-        const weight = Math.min(1, value.displayAttributes.normWeight);
-        // Exponential scale for better visual contrast
-        const scaled = Math.pow(weight, 0.4); // 0.4 is a good starting point, adjust as needed
-        const red = Math.round(255 - 255 * scaled);
-        const green = Math.round(255 - 255 * scaled);
-        const blue = 255;
-        cell.style.backgroundColor = `rgb(${red}, ${green}, ${blue})`;
-      }
+      // Apply coloring based on selected color mode
+      this.applyColor(cell, value, table);
 
       rowElement.appendChild(cell);
       cIndex++;
@@ -114,86 +104,134 @@ class TableRenderer {
     return value.toFixed(2);
   }
 
-  createSurfacePlot() {
-    const { row, col, table, id } = this.data;
+  setColorMode(mode) {
+    this.colorMode = mode || 'none';
+  }
 
-    // Format the axes values
-    const x = [];
-    for (let c = col.min; c <= col.max + 0.01; c += col.step) {
-      x.push(this.formatColumnHeader(c));
+  computeExtents(table) {
+    if (!Array.isArray(table)) return;
+  const modesToCompute = ['leeway','factor','trace'];
+    const accum = {};
+    for (const m of modesToCompute) {
+      accum[m] = {min: Infinity, max: -Infinity};
     }
-
-    const y = [];
-    for (let r = row.min; r <= row.max + 0.01; r += row.step) {
-      y.push(this.formatRowHeader(r));
+    for (const row of table) {
+      for (const cell of row) {
+        if (!cell || cell.N === 0) continue;
+        const {x,y} = cell;
+        // Pruned x,y,magnitude extent tracking.
+        const leeway = Number.isFinite(y) && Number.isFinite(x) ? Math.atan2(y, 1) : null; // placeholder; real leeway may be provided
+        if (leeway != null) {
+          if (leeway < accum.leeway.min) accum.leeway.min = leeway;
+          if (leeway > accum.leeway.max) accum.leeway.max = leeway;
+        }
+        if (Number.isFinite(cell.factor)) {
+          const f = cell.factor;
+            if (f < accum.factor.min) accum.factor.min = f;
+            if (f > accum.factor.max) accum.factor.max = f;
+        }
+        if (Number.isFinite(cell.trace)) {
+          const t = cell.trace;
+          if (t < accum.trace.min) accum.trace.min = t;
+          if (t > accum.trace.max) accum.trace.max = t;
+        }
+      }
     }
-    
+    this.cachedExtents = accum;
+  }
 
-    const zX = table.map(row => row.map(cell => cell.N > 0 ? cell.x : null)); // Assuming 'x' values for the surface plot
-    const zY = table.map(row => row.map(cell => cell.N > 0 ? cell.y : null)); // Assuming 'y' values for the surface plot
+  applyColor(cell, value, table) {
+    if (this.colorMode === 'none') return;
+    // weight uses provided normWeight
+    if (this.colorMode === 'weight') {
+      const weight = value.displayAttributes && Number.isFinite(value.displayAttributes.normWeight) ? Math.min(1, value.displayAttributes.normWeight) : 0;
+      const scaled = Math.pow(weight, 0.4);
+      cell.style.backgroundColor = this.blueScale(scaled);
+      return;
+    }
+    if (value.N === 0) return;
+    let v = 0;
+    if (this.colorMode === 'leeway') v = Number.isFinite(value.leeway) ? value.leeway : Math.atan2(value.y, 1); // prefer server-provided leeway
+    else if (this.colorMode === 'factor') v = Number.isFinite(value.factor) ? value.factor : null;
+    else if (this.colorMode === 'trace') v = Number.isFinite(value.trace) ? value.trace : null;
 
-    // Open a new window
-    const newWindow = window.open('', 'Correction Plot', 'width=1024,height=800');
-    newWindow.document.title = 'Correction Plot';
+    const extent = this.cachedExtents[this.colorMode];
+    if (!extent || !Number.isFinite(v) || extent.min === Infinity) return;
 
-    // Create div elements for the plots
-    const plotDivX = newWindow.document.createElement('div');
-    plotDivX.id = 'surfacePlotX';
-    plotDivX.style.width = '100%';
-    plotDivX.style.height = '400px';
-
-    const plotDivY = newWindow.document.createElement('div');
-    plotDivY.id = 'surfacePlotY';
-    plotDivY.style.width = '100%';
-    plotDivY.style.height = '400px';
-
-    newWindow.document.body.appendChild(plotDivX);
-    newWindow.document.body.appendChild(plotDivY);
-
-    // Data for the surface plots
-    const plotDataX = [{
-      type: 'surface',
-      x: x,
-      y: y,
-      z: zX
-    }];
-
-    const plotDataY = [{
-      type: 'surface',
-      x: x,
-      y: y,
-      z: zY
-    }];
-
-    // Layout for the surface plots
-    const layoutX = {
-      title: 'X-value',
-      autosize: true,
-      scene: {
-        xaxis: { title: 'Speed' },
-        yaxis: { title: 'Heel' },
-        zaxis: { title: 'Correction' }
+    let color;
+    {
+      // sequential for magnitude
+      let norm;
+      if (this.colorMode === 'leeway') {
+        // leeway uses absolute value; recompute extent assuming cached min/max are signed
+        const maxAbs = Math.max(Math.abs(extent.min), Math.abs(extent.max));
+        norm = maxAbs > 0 ? Math.min(1, Math.abs(v) / maxAbs) : 0;
+          if (norm === 0) {
+            return; // blank for zero leeway
+          }
+      } else if (this.colorMode === 'factor') {
+        // Asymmetric: baseline 1 -> blank. <1 use orange scale, >1 use green scale.
+        if (!Number.isFinite(v) || v <= 0) return; // invalid or zero forward -> blank
+        if (Math.abs(v - 1) < 1e-6) return; // exactly baseline
+        // Determine deviation span using max distance from 1 among sampled extents
+        const maxDev = Math.max(Math.abs(extent.min - 1), Math.abs(extent.max - 1));
+        if (maxDev <= 0) return;
+        const dev = (v - 1) / maxDev; // in [-1,1]
+        const a = Math.min(1, Math.abs(dev));
+        if (dev < 0) {
+          // compression (factor<1): white -> orange (#FFA500)
+          const r = Math.round(255 - (255-255)*a); // stays 255
+          const g = Math.round(255 - (255-165)*a); // 255 -> 165
+          const b = Math.round(255 - (255-0)*a);   // 255 -> 0
+          color = `rgb(${r},${g},${b})`;
+        } else {
+          // expansion (factor>1): white -> green (#00A050 slightly toned)
+          const target = {r:0,g:160,b:80};
+          const r = Math.round(255 - (255-target.r)*a);
+          const g = Math.round(255 - (255-target.g)*a);
+          const b = Math.round(255 - (255-target.b)*a);
+          color = `rgb(${r},${g},${b})`;
+        }
+        cell.style.backgroundColor = color;
+        return;
+      } else if (this.colorMode === 'trace') {
+        if (!Number.isFinite(v) || v <= 0) return; // blank for no/zero trace
+        // Scale 0..1
+        const normTrace = (v - extent.min) / (extent.max - extent.min || 1);
+        if (normTrace <= 0) return;
+        const t = Math.pow(Math.min(1, Math.max(0, normTrace)), 0.5); // gamma 0.5 for contrast
+        // White -> Purple (#8000FF) gradient
+        const target = { r: 128, g: 0, b: 255 };
+        const r = Math.round(255 - (255 - target.r) * t);
+        const g = Math.round(255 - (255 - target.g) * t);
+        const b = Math.round(255 - (255 - target.b) * t);
+        cell.style.backgroundColor = `rgb(${r},${g},${b})`;
+        return;
+      } else {
+        norm = (v - extent.min) / (extent.max - extent.min || 1); // 0..1
       }
-    };
+      color = this.blueScale(Math.pow(norm,0.5));
+    }
+    cell.style.backgroundColor = color;
+  }
 
-    const layoutY = {
-      title: 'Y-value',
-      autosize: true,
-      scene: {
-        xaxis: { title: 'Speed' },
-        yaxis: { title: 'Heel' },
-        zaxis: { title: 'Correction' }
-      }
-    };
+  blueScale(t) {
+    // t in [0,1]; 0 = white, 1 = deep blue
+    if (!Number.isFinite(t)) t = 0;
+    if (t < 0) t = 0; else if (t > 1) t = 1;
+    const r = Math.round(255 - 255 * t);
+    const g = Math.round(255 - 255 * t);
+    const b = 255;
+    return `rgb(${r},${g},${b})`;
+  }
 
-    const config = {
-      displayModeBar: false,
-      responsive: true // Ensure the plot is responsive
-    };
-
-    // Render the plots using Plotly
-    Plotly.newPlot(plotDivX, plotDataX, layoutX, config);
-    Plotly.newPlot(plotDivY, plotDataY, layoutY, config);
+  redBlueDiverging(n) {
+    // n in [-1,1]; negative=blue positive=red, 0=white
+    const t = (n+1)/2; // 0..1
+    const r = Math.round(255 * t);
+    const g = Math.round(255 * (1 - Math.abs(n)));
+    const b = Math.round(255 * (1 - t));
+    return `rgb(${r},${g},${b})`;
   }
 }
 
