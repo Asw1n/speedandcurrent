@@ -118,8 +118,12 @@ Open via Signal K Server: Apps → Speed and current.
 ### The menu
 The menu allows you to:
 - select the unit of choice for speed and angle
-- select a polar(magnitude + angle)  or cartesion (x and y speed) based representation of the correction table.
-- pause the regular updates
+- select the values to be displayed in the correction table. 
+  - Correction. The correction vector (x,y).
+  - Factor. The factor for correcting the speed component.
+  - Leeway. The leeway angle.
+  - Trace. The uncertainty of the correction vector.
+  - N. The number of observations the correction vector is based on.
 - select the color mode for the correction table:
   - None. No background colring of the correction table.
   - Weight. Colors cells according to their contribution in speed correction, the darker the cell the more weight is givin to its correction vector.

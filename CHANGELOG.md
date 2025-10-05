@@ -18,14 +18,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [1.5.0] - ntb
 ### Changed
-- Simplified code
-- Less CPU usage
 - Seperate loops for correcting speed and for updating correction factors
 - Speed correction loop uses raw values
-- Updating correction factors using moving averages
+- Updating correction factors using moving averages 
+- Unified cell rendering driven by "Show" selections; removed the previous Table style toggle
 ### Added
 - Option to set the source for input paths
 - Full integration of uncertainty estimations (variance) in estimations and corrections.
+- WebApp: "Show" multi-select to choose per-cell metrics (correction X/Y, factor, leeway, trace, N) for the correction table
+- WebApp: Color mode options for the correction table
+- WebApp: Persistence for speed unit, angle unit, color mode, and shown metrics via localStorage
 ### Fixed
 - Angles are now reported in the appropriate range, 0 to 2 * PI or -PI to PI, depending on path
 
