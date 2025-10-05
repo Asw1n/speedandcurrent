@@ -119,8 +119,10 @@ class TableRenderer {
       for (const cell of row) {
         if (!cell || cell.N === 0) continue;
         const {x,y} = cell;
-        // Pruned x,y,magnitude extent tracking.
-        const leeway = Number.isFinite(y) && Number.isFinite(x) ? Math.atan2(y, 1) : null; // placeholder; real leeway may be provided
+        // Prefer server-provided leeway for consistent scaling; fallback to placeholder
+        const leeway = Number.isFinite(cell.leeway)
+          ? cell.leeway
+          : (Number.isFinite(y) && Number.isFinite(x) ? Math.atan2(y, 1) : null);
         if (leeway != null) {
           if (leeway < accum.leeway.min) accum.leeway.min = leeway;
           if (leeway > accum.leeway.max) accum.leeway.max = leeway;

@@ -120,6 +120,14 @@ The menu allows you to:
 - select the unit of choice for speed and angle
 - select a polar(magnitude + angle)  or cartesion (x and y speed) based representation of the correction table.
 - pause the regular updates
+- select the color mode for the correction table:
+  - None. No background colring of the correction table.
+  - Weight. Colors cells according to their contribution in speed correction, the darker the cell the more weight is givin to its correction vector.
+  - Leeway. Colors cells according to the amount of estimated leeway. The darker, the more leeway.
+  - Factor. Colors cell according the the amount of forward speed correction (ignoring leeway).
+  - Trace. Colors cells according to their uncertainty, the lighter the cell the more uncertain its correction vector.
+
+
 
 ### Interpreting Vectors
 - Corrected Speed vs Raw: Convergence occurs when their magnitudes diverge by a stable, plausible bias and the correction vector stops oscillating wildly. 

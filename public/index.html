@@ -30,18 +30,19 @@
       </select>
     </div>
 
-    <!-- Table style Selection -->
-    <div class="menu-item dropdown">
-      <label for="table-style">Table style:</label>
-      <select id="table-style" onchange="handleTableStyleChange(this.value)">
-        <option value="cartesian" selected>cartesian</option>
-        <option value="polar" >polar</option>
-      </select>
+        <!-- Metrics Selection -->
+    <div class="menu-item" id="metrics-group">
+      <span>Show:</span>
+      <label><input type="checkbox" id="show-correction" onchange="handleMetricsChange()"> correction</label>
+      <label><input type="checkbox" id="show-factor" onchange="handleMetricsChange()"> factor</label>
+      <label><input type="checkbox" id="show-leeway" onchange="handleMetricsChange()"> leeway</label>
+      <label><input type="checkbox" id="show-trace" onchange="handleMetricsChange()"> trace</label>
+      <label><input type="checkbox" id="show-N" onchange="handleMetricsChange()"> N</label>
     </div>
 
     <!-- Color Mode Selection -->
     <div class="menu-item dropdown">
-      <label for="color-mode">Color:</label>
+      <label for="color-mode">Table coloring:</label>
       <select id="color-mode" onchange="handleColorModeChange(this.value)">
         <option value="none" selected>none</option>
         <option value="weight">weight</option>
@@ -50,6 +51,8 @@
         <option value="trace">trace</option>
       </select>
     </div>
+
+
 
 
     <!-- Pause Button -->

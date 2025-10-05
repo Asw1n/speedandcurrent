@@ -12,46 +12,51 @@ let vSpeed = 1;
 let dSpeed = 1;
 
 
+const LS_KEYS = {
+  speed: 'sc_speed_unit',
+  angle: 'sc_angle_unit',
+  color: 'sc_color_mode',
+  metrics: 'sc_table_metrics'
+};
+
 export function handleSpeedUnitChange(value) {
   if (value == "knots") {
     vSpeed = 1.943844;
     dSpeed = 1;
+    localStorage.setItem(LS_KEYS.speed, 'knots');
     return;
   }
   if (value == "kmh") {
     vSpeed = 3.6;
     dSpeed = 1;
+    localStorage.setItem(LS_KEYS.speed, 'kmh');
     return;
   }
   vSpeed = 1;
   dSpeed = 1;
+  localStorage.setItem(LS_KEYS.speed, 'ms');
 }
 
 export function handleAngleUnitChange(value) {
   if (value == "degrees") {
     vAngle = 180 / Math.PI;
     dAngle = 0;
+    localStorage.setItem(LS_KEYS.angle, 'degrees');
     return;
   }
   vAngle = 1;
   dAngle = 2;
+  localStorage.setItem(LS_KEYS.angle, 'radians');
 }
 
 
 
-export function handleTableStyleChange(value) {
-  //console.log(value);
-  if (value == "cartesian") {
-    tableRenderer.setCellFormat(cartesian);
-  }
-  else {
-    tableRenderer.setCellFormat(polar);
-  }
-}
+// Removed table style switch; rendering is driven by metrics selection.
 
 export function handleColorModeChange(value) {
   if (tableRenderer && tableRenderer.setColorMode) {
     tableRenderer.setColorMode(value);
+    localStorage.setItem(LS_KEYS.color, value);
     // re-render immediately using last data if available
     // fetchAndUpdateData will repaint next tick; do a quick repaint now if cached
     // (Simplest approach: trigger fetch)
@@ -69,23 +74,83 @@ function cSpeed(value) {
   return value.toFixed(dSpeed);
 }
 
+let selectedMetrics = {
+  correction: true,
+  factor: true,
+  leeway: true,
+  trace: false,
+  N: true,
+};
+
+function buildCellContent(parts) {
+  // parts is array of strings; filter falsy and join
+  return parts.filter(Boolean).join('\n');
+}
+
 function cartesian(correction, speed, heel) {
   if (correction.N == 0) return null;
-  return ` <div><strong>X:</strong> ${cSpeed(correction.x)}</div>
-           <div><strong>Y:</strong> ${cSpeed(correction.y)}</div>
-           <div><strong>N:</strong> ${correction.N}</div>
-          `;
+  const bits = [];
+  if (selectedMetrics.correction) {
+    bits.push(` <div><strong>X:</strong> ${cSpeed(correction.x)}</div>`);
+    bits.push(` <div><strong>Y:</strong> ${cSpeed(correction.y)}</div>`);
+  }
+  if (selectedMetrics.trace && Number.isFinite(correction.trace)) {
+    bits.push(` <div><strong>trace:</strong> ${Number(correction.trace).toPrecision(2)}</div>`);
+  }
+  if (selectedMetrics.N) {
+    bits.push(` <div><strong>N:</strong> ${correction.N}</div>`);
+  }
+  return buildCellContent(bits);
 }
 
 function polar(correction, speed, heel) {
   if (speed == 0 || correction.N == 0) return null;
+  const bits = [];
   // Prefer server-provided values when available
   const factor = Number.isFinite(correction.factor) ? correction.factor : (speed > 0 ? (correction.x + speed) / speed : 0);
   const leewayRad = Number.isFinite(correction.leeway) ? correction.leeway : Math.atan2(correction.y, speed + correction.x);
-  return ` <div><strong>factor:</strong> ${factor.toFixed(2)}</div>
-           <div><strong>leeway:</strong> ${cAngle(leewayRad)}</div>
-           <div><strong>N:</strong> ${correction.N}</div>
-          `;
+  const leewayDisplay = leewayRad; // signed value; color uses |leeway|
+
+  if (selectedMetrics.factor) {
+    bits.push(` <div><strong>factor:</strong> ${factor.toFixed(2)}</div>`);
+  }
+  if (selectedMetrics.leeway) {
+    bits.push(` <div><strong>leeway:</strong> ${cAngle(leewayDisplay)}</div>`);
+  }
+  if (selectedMetrics.trace && Number.isFinite(correction.trace)) {
+    bits.push(` <div><strong>trace:</strong> ${Number(correction.trace).toPrecision(2)}</div>`);
+  }
+  if (selectedMetrics.N) {
+    bits.push(` <div><strong>N:</strong> ${correction.N}</div>`);
+  }
+  return buildCellContent(bits);
+}
+
+function unifiedCellRenderer(correction, speed, heel) {
+  // Combines polar-oriented metrics and cartesian correction based on selections
+  if (correction.N == 0) return null;
+  const bits = [];
+  // Polar-ish metrics
+  if (selectedMetrics.factor && (speed !== 0)) {
+    const factor = Number.isFinite(correction.factor) ? correction.factor : (speed > 0 ? (correction.x + speed) / speed : 0);
+    bits.push(` <div><strong>factor:</strong> ${factor.toFixed(2)}</div>`);
+  }
+  if (selectedMetrics.leeway && (speed !== 0)) {
+    const leewayRad = Number.isFinite(correction.leeway) ? correction.leeway : Math.atan2(correction.y, speed + correction.x);
+    bits.push(` <div><strong>leeway:</strong> ${cAngle(leewayRad)}</div>`);
+  }
+  // Cartesian correction (always available)
+  if (selectedMetrics.correction) {
+    bits.push(` <div><strong>X:</strong> ${cSpeed(correction.x)}</div>`);
+    bits.push(` <div><strong>Y:</strong> ${cSpeed(correction.y)}</div>`);
+  }
+  if (selectedMetrics.trace && Number.isFinite(correction.trace)) {
+    bits.push(` <div><strong>trace:</strong> ${Number(correction.trace).toPrecision(2)}</div>`);
+  }
+  if (selectedMetrics.N) {
+    bits.push(` <div><strong>N:</strong> ${correction.N}</div>`);
+  }
+  return buildCellContent(bits);
 }
 
 
@@ -267,22 +332,88 @@ export function toggleUpdates() {
 
 //document.getElementById('toggle-updates').addEventListener('click', toggleUpdates);
 
-handleSpeedUnitChange("knots");
-handleAngleUnitChange("degrees");
-
 const tableRenderer = new TableRenderer();
-handleTableStyleChange("cartesian");
 tableRenderer.setColumnHeaderFormat(cAngle);
 tableRenderer.setRowHeaderFormat(cSpeed);
+// Default cell format is unified and driven by metrics; set to polar-like by default
+tableRenderer.setCellFormat(unifiedCellRenderer);
+
+function initSettingsFromStorage() {
+  try {
+    const speedUnit = localStorage.getItem(LS_KEYS.speed) || 'knots';
+    const angleUnit = localStorage.getItem(LS_KEYS.angle) || 'degrees';
+    const colorMode = localStorage.getItem(LS_KEYS.color) || 'none';
+    const metricsRaw = localStorage.getItem(LS_KEYS.metrics);
+
+    const speedEl = document.getElementById('speed-unit');
+    const angleEl = document.getElementById('angle-unit');
+    const colorEl = document.getElementById('color-mode');
+    const metricsEls = {
+      correction: document.getElementById('show-correction'),
+      factor: document.getElementById('show-factor'),
+      leeway: document.getElementById('show-leeway'),
+      trace: document.getElementById('show-trace'),
+      N: document.getElementById('show-N'),
+    };
+    if (speedEl) speedEl.value = speedUnit;
+    if (angleEl) angleEl.value = angleUnit;
+    if (colorEl) colorEl.value = colorMode;
+    if (metricsRaw) {
+      try {
+        const parsed = JSON.parse(metricsRaw);
+        selectedMetrics = { ...selectedMetrics, ...parsed };
+      } catch {}
+    }
+    // Initialize checkboxes to match selectedMetrics
+    if (metricsEls.correction) metricsEls.correction.checked = !!selectedMetrics.correction;
+    if (metricsEls.factor) metricsEls.factor.checked = !!selectedMetrics.factor;
+    if (metricsEls.leeway) metricsEls.leeway.checked = !!selectedMetrics.leeway;
+    if (metricsEls.trace) metricsEls.trace.checked = !!selectedMetrics.trace;
+    if (metricsEls.N) metricsEls.N.checked = !!selectedMetrics.N;
+
+    // Apply handlers (order: units, then renderer-dependent)
+    handleSpeedUnitChange(speedUnit);
+    handleAngleUnitChange(angleUnit);
+    handleColorModeChange(colorMode);
+  } catch (e) {
+    // Fallback to defaults on any error
+    handleSpeedUnitChange('knots');
+    handleAngleUnitChange('degrees');
+    handleColorModeChange('none');
+  }
+}
+
+export function handleMetricsChange() {
+  const metricsEls = {
+    correction: document.getElementById('show-correction'),
+    factor: document.getElementById('show-factor'),
+    leeway: document.getElementById('show-leeway'),
+    trace: document.getElementById('show-trace'),
+    N: document.getElementById('show-N'),
+  };
+  selectedMetrics = {
+    correction: metricsEls.correction ? !!metricsEls.correction.checked : selectedMetrics.correction,
+    factor: metricsEls.factor ? !!metricsEls.factor.checked : selectedMetrics.factor,
+    leeway: metricsEls.leeway ? !!metricsEls.leeway.checked : selectedMetrics.leeway,
+    trace: metricsEls.trace ? !!metricsEls.trace.checked : selectedMetrics.trace,
+    N: metricsEls.N ? !!metricsEls.N.checked : selectedMetrics.N,
+  };
+  try {
+    localStorage.setItem(LS_KEYS.metrics, JSON.stringify(selectedMetrics));
+  } catch {}
+  // Re-render with current data (trigger fetch or reuse last render by forcing a refresh)
+  fetchAndUpdateData();
+}
 
 
 // Attach functions to the window object to make them globally accessible
 window.handleSpeedUnitChange = handleSpeedUnitChange;
 window.handleAngleUnitChange = handleAngleUnitChange;
-window.handleTableStyleChange = handleTableStyleChange;
 window.handleColorModeChange = handleColorModeChange;
+window.handleMetricsChange = handleMetricsChange;
 window.toggleUpdates = toggleUpdates;
 
 
 // Initial fetch and start updates
+initSettingsFromStorage();
 startUpdates();
