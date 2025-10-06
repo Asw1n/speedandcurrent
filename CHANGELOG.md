@@ -16,7 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Case error in filename that prevented the webapp from displaying the correction table
 - Corrected speed through water is now calculated when the correction table is fixed
 
-## [1.5.0] - ntb
+## [1.5.0] - 2025-10-06
 ### Changed
 - Seperate loops for correcting speed and for updating correction factors
 - Speed correction loop uses raw values
@@ -31,4 +31,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - WebApp: Persistence for speed unit, angle unit, color mode, and shown metrics via localStorage
 ### Fixed
 - Angles are now reported in the appropriate range, 0 to 2 * PI or -PI to PI, depending on path
+
+## [1.5.1] - 2025-10-06
+### Fixed
+- Bug preventing current to be displayed in KIP.
 
