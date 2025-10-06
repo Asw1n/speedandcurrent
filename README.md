@@ -86,9 +86,8 @@ If there are multiple sources available for a single path, one should specify th
 1. Be patient with the correction table. Its corrections will improve over time. 
 2. Once corrections stabilize, raise Stability to lock in values.
 3. Freeze learning (disable Update Correction Table) before performance-sensitive events (e.g., racing) or in unstable conditions (waves, currents).
-4. Changing table parameters will destroy the current table.
-5. After paddle wheel cleaning or if fouling suspected: temporarily LOWER Stability (e.g., from 7 → 5) to let corrections adapt, then raise again; do not rebuild unless the grid itself must change.
-6. The plugin will always estimate currents when Estimate boat speed is enabled. Even when Assume currents is disabled, as this setting is only used in updating the correction table.
+4. After paddle wheel cleaning or if fouling suspected: temporarily LOWER Stability (e.g., from 7 → 5) to let corrections adapt, then raise again; do not rebuild unless the grid itself must change.
+5. The plugin will always estimate currents when Estimate boat speed is enabled. Even when Assume currents is disabled, as this setting is only used in updating the correction table.
 
 ## Persistence & Data Storage
 The correction table is persisted inside the plugin configuration (saved approximately every 5 seconds while learning). It is reloaded automatically on restart.

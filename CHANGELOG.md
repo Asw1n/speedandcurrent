@@ -25,6 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 - Option to set the source for input paths
 - Full integration of uncertainty estimations (variance) in estimations and corrections.
+- Ability to resize the correction table whithout loosing all correction data.
 - WebApp: "Show" multi-select to choose per-cell metrics (correction X/Y, factor, leeway, trace, N) for the correction table
 - WebApp: Color mode options for the correction table
 - WebApp: Persistence for speed unit, angle unit, color mode, and shown metrics via localStorage

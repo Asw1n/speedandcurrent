@@ -398,7 +398,7 @@ module.exports = function (app) {
    */
   function correct(wellUnderway) {
     // prepare iteration
-    const heel = rawAttitude.value.roll;
+    const heel = rawAttitude.value?.roll;
     const speed = rawBoatSpeed.magnitude;
     const theta = rawHeading.value;
     //app.debug(`Heel: ${SI.toDegrees(heel).toFixed(1)}°, Speed: ${SI.toKnots(speed).toFixed(2)} kn, Heading: ${SI.toDegrees(theta).toFixed(1)}°`);
@@ -499,11 +499,18 @@ module.exports = function (app) {
     const col = { min: -SI.fromDegrees(options.maxHeel), max: SI.fromDegrees(options.maxHeel), step: SI.fromDegrees(options.heelStep) };
     let table;
     const stability = (options.stability !== undefined) ? options.stability : 6;
+    const VAR_FLOOR = 1e-4;
     if (enforceConsistancy(options, row, col) && !options.startWithNewTable) {
       table = CorrectionTable.fromJSON(options.correctionTable, stability);
       app.debug("Correction table loaded");
     }
-    else {
+    else if (options.correctionTable && !options.startWithNewTable) {
+      // Resample existing table to new dimensions conservatively (N=0, diag covariance with floor)
+      table = CorrectionTable.resampleFromJSON(options.correctionTable, row, col, stability, VAR_FLOOR);
+      app.debug("Correction table migrated to new dimensions");
+      options.startWithNewTable = false;
+      saveTable(options, table);
+    } else {
       table = new CorrectionTable("correctionTable", row, col, stability);
       app.debug("Correction table created");
       // doStartFresh is not user-settable, so no need to reset it here

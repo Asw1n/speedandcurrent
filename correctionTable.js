@@ -14,6 +14,71 @@ class CorrectionTable extends Table2D{
     return table;
   }
 
+  /**
+   * Resample an existing table onto a new grid conservatively.
+   * - Seeds mean from oldTable.getCorrection at each new cell center
+   * - Seeds diagonal covariance with a per-axis floor
+   * - Sets index (N) = 0 so all cells can re-learn on the new grid
+   *
+   * @param {CorrectionTable} oldTable - Source table to sample from
+   * @param {{min:number,max:number,step:number}} newRow - New speed axis definition (SI units)
+   * @param {{min:number,max:number,step:number}} newCol - New heel axis definition (SI units)
+   * @param {number} [stability=5] - Stability passed to new table filter model
+   * @param {number} [varianceFloor=1e-4] - Floor applied to cov[0][0] and cov[1][1]
+   * @returns {CorrectionTable}
+   */
+  static resample(oldTable, newRow, newCol, stability = 5, varianceFloor = 1e-4) {
+    const newTable = new CorrectionTable("correctionTable", newRow, newCol, stability);
+
+    const nRows = Math.round((newRow.max - newRow.min) / newRow.step) + 1;
+    const nCols = Math.round((newCol.max - newCol.min) / newCol.step) + 1;
+
+    for (let i = 0; i < nRows; i++) {
+      const speed = newRow.min + i * newRow.step;
+      for (let j = 0; j < nCols; j++) {
+        const heel = newCol.min + j * newCol.step;
+
+        const { correction, variance } = oldTable.getCorrection(speed, heel);
+
+        const mean = [[(correction?.x ?? 0)], [(correction?.y ?? 0)]];
+        const covXX = Math.max(Number.isFinite(variance?.x) ? variance.x : 0, varianceFloor);
+        const covYY = Math.max(Number.isFinite(variance?.y) ? variance.y : 0, varianceFloor);
+        const covariance = [[covXX, 0], [0, covYY]];
+
+        // Decide initialization index based on coverage/support from old table
+        const inBounds = (
+          speed >= oldTable.min[0] && speed <= oldTable.max[0] &&
+          heel  >= oldTable.min[1] && heel  <= oldTable.max[1]
+        );
+        let supportCount = 0;
+        let effectiveN = 0;
+        if (Array.isArray(oldTable.neighbours)) {
+          for (const n of oldTable.neighbours) {
+            const N = n?.cell?.N || 0;
+            if (N > 0) supportCount++;
+            const w = Number.isFinite(n?.normWeight) ? n.normWeight : 0;
+            effectiveN += w * N;
+          }
+        }
+        // Heuristic: require in-bounds AND at least 2 learned neighbours AND some effective support
+        const index = (inBounds && supportCount >= 2 && effectiveN >= 1) ? 1 : 0;
+
+        // Seed prior with mean and conservative covariance; index as decided above
+        newTable.table[i][j].filterState = new State({ mean, covariance, index });
+      }
+    }
+    newTable.setDisplayAttributes({ label: "correction table" });
+    return newTable;
+  }
+
+  /**
+   * Convenience to resample from serialized JSON table data
+   */
+  static resampleFromJSON(data, newRow, newCol, stability = 5, varianceFloor = 1e-4) {
+    const oldTable = CorrectionTable.fromJSON(data, stability);
+    return CorrectionTable.resample(oldTable, newRow, newCol, stability, varianceFloor);
+  }
+
   constructor(id, row, col, stability=5) {
     super(id, row, col, CorrectionEstimator, CorrectionEstimator.getFilterModel(stability));
     this.lastUpdatedCell = null;
