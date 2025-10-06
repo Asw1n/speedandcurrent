@@ -240,6 +240,9 @@ module.exports = function (app) {
 
 
     // current
+    // send metadata for current
+    MessageHandler.setMeta(app, plugin.id, "environment.current.drift", {units: "m/s", type: "number", description: "Speed of the current"});
+    MessageHandler.setMeta(app, plugin.id, "environment.current.setTrue", { units: "rad", type: "number", description: "Direction of the current" });
     rawCurrent = new Polar("current", "self.environment.current.drift", "self.environment.current.setTrue");
     rawCurrent.setDisplayAttributes({ label: "current", plane: "Ground" });
     rawCurrent.setAngleRange('0to2pi');
@@ -266,6 +269,7 @@ module.exports = function (app) {
     noCurrent.xSmoother.reset(0,0);
     noCurrent.ySmoother.reset(0,0);
     PolarSmoother.send(app, plugin.id, [noCurrent]);
+
 
     // boat speed
     smoothedBoatSpeed = new SmoothedSpeedThroughWater(app, plugin.id, settings.boatSpeedSource, true, MovingAverageSmoother, smootherOptions, !settings.preventDuplication);
