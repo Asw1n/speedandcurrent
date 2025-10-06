@@ -160,26 +160,54 @@ async function getFromServer(endpoint) {
     const response = await fetch(`${API_BASE_URL}/${endpoint}`, {
       method: 'GET',
       headers: {
-        'Content-Type': 'application/json'
-      }
+        'Accept': 'application/json'
+      },
+      credentials: 'same-origin' // include cookies for auth
     });
 
-    if (!response.ok) {
-      if (response.status === 503) {
-        document.getElementById("message").innerHTML = "Plugin is not running";
-      } else {
-        document.getElementById("message").innerHTML = "Failed to fetch data. Error: " + response.status + " " + response.statusText;
+    const msgEl = document.getElementById("message");
+    const contentType = response.headers.get('content-type') || '';
+
+    // Auth errors: show friendly message and pause updates
+    if (response.status === 401 || response.status === 403) {
+      if (msgEl) {
+        msgEl.innerHTML = 'Not signed in. Please <a href="/">sign in</a> to the Signal K server, then reload this page.';
       }
-    }
-    else {
-      document.getElementById("message").innerHTML = "";
+      if (updateTimer) {
+        clearInterval(updateTimer);
+        updatesPaused = true;
+        const toggleButton = document.getElementById('toggle-updates');
+        if (toggleButton) toggleButton.textContent = "Resume";
+      }
+      return null;
     }
 
-    const data = await response.json();
-    return data;
+    // Service not running or other HTTP errors
+    if (!response.ok) {
+      if (response.status === 503) {
+        if (msgEl) msgEl.textContent = "Plugin is not running";
+      } else {
+        if (msgEl) msgEl.textContent = `Failed to fetch data (${response.status} ${response.statusText}).`;
+      }
+      return null;
+    }
+
+    // Only parse JSON when content-type matches
+    if (contentType.includes('application/json')) {
+      const data = await response.json();
+      if (msgEl) msgEl.textContent = "";
+      return data;
+    } else {
+      // Likely an HTML login page or plain text error
+      if (msgEl) {
+        msgEl.innerHTML = 'Unexpected server response. If you are not signed in, please <a href="/">sign in</a> to the Signal K server, then reload.';
+      }
+      return null;
+    }
   } catch (error) {
     console.error("Failed to fetch data from server:", error);
-    document.getElementById("message").innerHTML = error;
+    const msgEl = document.getElementById("message");
+    if (msgEl) msgEl.textContent = `Network error: ${error && error.message ? error.message : String(error)}`;
     return null;
   }
 }
