@@ -10,7 +10,7 @@ class CorrectionTable extends Table2D{
 
   static fromJSON(data, stability) {
     const table = new CorrectionTable(data.id, data.row, data.col, stability);
-    table.table = data.table.map(row => row.map(cellData => CorrectionEstimator.fromJSON(cellData)));
+    table.table = data.table.map(row => row.map(cellData => CorrectionEstimator.fromJSON(cellData, stability)));
     return table;
   }
 
@@ -114,7 +114,7 @@ class CorrectionTable extends Table2D{
           const factor = speedBin > 0 ? forward / speedBin : null;
           // Leeway angle based on sideways over forward; only if forward > 0
           const leeway = (forward > 0 && cellReport.N > 0) ? Math.atan2(cellReport.y, forward) : null;
-          // Trace (custom definition): sqrt( cov_xx^2 + cov_yy^2 ) when covariance available and N>0
+          // Trace ( cov_xx + cov_yy ) when covariance available and N>0
           let trace = null;
           if (cellReport.N > 0) {
             try {
@@ -122,7 +122,8 @@ class CorrectionTable extends Table2D{
               if (cov && Array.isArray(cov) && cov[0] && cov[1] && Number.isFinite(cov[0][0]) && Number.isFinite(cov[1][1])) {
                 const a = cov[0][0];
                 const d = cov[1][1];
-                trace = Math.sqrt(a*a + d*d);
+                //trace = Math.sqrt(a*a + d*d);
+                trace = a + d;
               }
             } catch { /* silent */ }
           }

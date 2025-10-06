@@ -7,11 +7,10 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "aswin.bouwmeester@gmail.com",
-  "license": "ISC",
+  "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Asw1n/speedandcurrent.git",
-    "directory": "./CHANGELOG.md"
+    "url": "git+https://github.com/Asw1n/speedandcurrent.git"
   },
   "bugs": {
     "url": "https://github.com/Asw1n/speedandcurrent/issues"
@@ -24,11 +23,17 @@
   ],
   "signalk-plugin-enabled-by-default": false,
   "signalk": {
-    "appIcon": "./icon.png",
+    "appIcon": "./public/icon.png",
     "displayName": "Speed and current"
   },
   "dependencies": {
     "kalman-filter": "^2.3.0",
     "signalkutilities": "^1.5.0"
-  }
+  },
+  "files": [
+    "index.js",
+    "correctionTable.js",
+    "leakyExtremes.js",
+    "public/"
+  ]
 }

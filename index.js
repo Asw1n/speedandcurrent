@@ -35,6 +35,14 @@ module.exports = function (app) {
   let reportVector = null;
   let table = null;
 
+  // add missing declarations
+  let rawHeading = null;
+  let rawAttitude = null;
+  let noCurrent = null;
+  let rawBoatSpeed = null;
+  let rawGroundSpeed = null;
+  let started = null;
+
   const plugin = {};
   plugin.id = "SpeedAndCurrent";
   plugin.name = "Speed and current";
@@ -348,21 +356,25 @@ module.exports = function (app) {
     return new Promise((resolve, reject) => {
       try {
         smoothedHeading = smoothedHeading?.terminate(app);
-        stability = stability?.terminate(app);
+        stability = stability?.terminate?.(app);
         smoothedAttitude = smoothedAttitude?.terminate(app);
         rawCurrent = rawCurrent?.terminate(app);
-        smoothedCurrent = null;
+        smoothedCurrent = smoothedCurrent?.terminate?.(app);
         smoothedBoatSpeed = smoothedBoatSpeed?.terminate(app);
-        boatSpeedStat = null;
         correctedBoatSpeed = correctedBoatSpeed?.terminate(app);
         boatSpeedRefGround = boatSpeedRefGround?.terminate(app);
         smoothedGroundSpeed = smoothedGroundSpeed?.terminate(app);
-        groundSpeedStat = null;
         speedCorrection = speedCorrection?.terminate(app);
         residual = residual?.terminate(app);
         reportFull = null;
         reportVector = null;
         table = null;
+        rawHeading = null;
+        rawAttitude = null;
+        noCurrent = null;
+        rawBoatSpeed = null;
+        rawGroundSpeed = null;
+        started = null;
         app.setPluginStatus("Stopped");
         app.debug("Stopped");
 
@@ -397,14 +409,14 @@ module.exports = function (app) {
 
     correctedBoatSpeed.copyFrom(rawBoatSpeed);
     speedCorrection.setVectorValue({ x: 0, y: 0 }) ;
-    if (speed > 0) {
+    if (speed > 0 && !rawAttitude.stale ) {
       const { correction, variance } = table.getCorrection(speed, heel);
       speedCorrection.setVectorValue(correction, variance);
       correctedBoatSpeed.add(speedCorrection);
     }
     Polar.send(app, plugin.id, [correctedBoatSpeed]);
     // estimate current
-    if (wellUnderway) {
+    if (wellUnderway && !rawGroundSpeed.stale) {
       boatSpeedRefGround.copyFrom(correctedBoatSpeed);
       boatSpeedRefGround.rotate(theta);
       rawCurrent.copyFrom(rawGroundSpeed);
@@ -433,7 +445,7 @@ module.exports = function (app) {
     if (!Number.isFinite(heel) || !Number.isFinite(speed) || !Number.isFinite(theta)) return;
 
     // update correction table
-    if (speed > minSpeed) {
+    if (speed > minSpeed && !smoothedAttitude.stale && !smoothedHeading.stale  && !smoothedGroundSpeed.stale) {
       table.update(speed, heel, smoothedGroundSpeed, assumeCurrent ? smoothedCurrent : noCurrent, smoothedBoatSpeed, theta);
     }
 
