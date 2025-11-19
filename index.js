@@ -51,6 +51,12 @@ module.exports = function (app) {
   plugin.schema = {
     type: "object",
     properties: {
+      sogFallback: {
+        type: "boolean",
+        title: "SOG fallback",
+        description: "Allow fallback to SOG when paddlewheel is blocked.",
+        default: true
+      },
       startWithNewTable: {
         type: "boolean",
         title: "Start with new table",
@@ -148,6 +154,7 @@ module.exports = function (app) {
 
   plugin.uiSchema = {
     'ui:order': [
+      "sogFallback",
       "estimateBoatSpeed",
       "updateCorrectionTable",
       "assumeCurrent",
@@ -164,6 +171,9 @@ module.exports = function (app) {
       "attitudeSource",
       "preventDuplication"
     ],
+    sogFallback: {
+      "ui:widget": "checkbox"
+    },
     startWithNewTable: {
       "ui:widget": "checkbox"
     },
@@ -343,6 +353,18 @@ module.exports = function (app) {
     smoothedBoatSpeed.onChange = () => {
       const wellUnderway = started < new Date() - 60 * 1000;
       const minSpeed = SI.fromKnots(settings.speedStep / 2);
+      
+      if (settings.sogFallback && fallingBackToSog( minSpeed) ){
+        app.setPluginStatus("Falling back to Speed Over Ground");
+        app.debug("Falling back");
+         return;
+      }
+      if (!wellUnderway) {
+        app.setPluginStatus("Stabilizing");
+      }
+      else {
+        app.setPluginStatus("Running");
+      }
       if (settings.estimateBoatSpeed) correct(wellUnderway);
       if (settings.updateCorrectionTable && wellUnderway) {
         updateTable(settings.assumeCurrent, minSpeed);
@@ -389,6 +411,15 @@ module.exports = function (app) {
       }
     });
   };
+
+  function fallingBackToSog( minSpeed) {
+    if (!rawBoatSpeed.stale && rawBoatSpeed.magnitude > 0) return false;
+    if (rawGroundSpeed.stale || rawGroundSpeed.magnitude < minSpeed) return false;
+    // Fallback to SOG
+    correctedBoatSpeed.setVectorValue({ x: rawGroundSpeed.magnitude, y: 0 });
+    Polar.send(app, plugin.id, [correctedBoatSpeed]);
+    return true;
+  }
 
    /**
    * Estimates and applies corrections to boat speed, leeway, and current.

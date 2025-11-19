@@ -36,3 +36,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 - Bug preventing current to be displayed in KIP.
 
+## [1.6.0] - 2025-11-19
+### Added
+- Option to copy navigation.speedOverGround to navigation.speedThroughWater when speedThroughWater is not properly measured (due to clogged paddlewheel for example). Thanks to Jean-Laurent Girod for the suggestion.
+
+
