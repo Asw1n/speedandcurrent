@@ -1,3 +1,6 @@
+const path = require('path');
+const fs = require('fs');
+
 const {
   SmoothedHeading,
   SmoothedAttitude,
@@ -12,12 +15,56 @@ const {
   KalmanSmoother,
   PolarSmoother,
   createSmoothedPolar,
-  createSmoothedHandler
+  createSmoothedHandler,
+  Table2D
 } = require('signalkutilities');
 
 const { CorrectionTable } = require('./correctionTable.js');
 
 module.exports = function (app) {
+
+  const DEFAULT_DIMS = { maxSpeed: 9, speedStep: 1, maxHeel: 32, heelStep: 8 };
+
+  let options = {};
+  let changedOptions = {};
+  const defaultOptions = {
+    sogFallback: true,
+    estimateBoatSpeed: false,
+    updateCorrectionTable: true,
+    stability: 7,
+    assumeCurrent: false,
+    headingSource: ' ',
+    boatSpeedSource: ' ',
+    COGSource: ' ',
+    SOGSource: ' ',
+    attitudeSource: ' ',
+    preventDuplication: true,
+    tableName: 'correctionTable'
+  };
+
+  function readOptions() {
+    const stored = app.readPluginOptions();
+    const raw = stored && stored.configuration ? stored.configuration : (stored || {});
+    // Strip embedded table — stored separately on disk
+    const { correctionTable: _drop, ...rest } = raw;
+    options = { ...defaultOptions, ...rest };
+  }
+
+  function saveOptions() {
+    app.savePluginOptions({ ...options }, (err) => {
+      if (err) app.error(`Error saving plugin options: ${err.message}`);
+    });
+  }
+
+  function saveTableName(name) {
+    options.tableName = name;
+    saveOptions();
+  }
+
+  function swapTable(newTable) {
+    table = newTable;
+    if (reportFull) reportFull.setTables([table]);
+  }
 
   let isRunning = false;
   let smoothedHeading = null;
@@ -50,18 +97,13 @@ module.exports = function (app) {
 
   plugin.schema = {
     type: "object",
+    description: "Speed and Current is configured through its own webapp. Open it from the Signal K app list.",
     properties: {
       sogFallback: {
         type: "boolean",
         title: "SOG fallback",
         description: "Allow fallback to SOG when paddlewheel is blocked.",
         default: true
-      },
-      startWithNewTable: {
-        type: "boolean",
-        title: "Start with new table",
-        description: "Start with a new correction table (overrides existing table).",
-        default: false
       },
       estimateBoatSpeed: {
         type: "boolean",
@@ -88,30 +130,6 @@ module.exports = function (app) {
         title: "Assume Current",
         description: "Assume there is a current present when updating the correction table.",
         default: false
-      },
-      heelStep: {
-        type: "number",
-        title: "Step size for heel",
-        description: "Correction table stepsize for heel.",
-        default: 8
-      },
-      maxHeel: {
-        type: "number",
-        title: "Maximum heel in correction table",
-        description: "Correction table maximum heel.",
-        default: 32
-      },
-      speedStep: {
-        type: "number",
-        title: "Step size for speed",
-        description: "Correction table stepsize for speed.",
-        default: 1
-      },
-      maxSpeed: {
-        type: "number",
-        title: "Maximum speed in correction table",
-        description: "Correction table maximum speed.",
-        default: 9
       },
       headingSource: {
         type: "string",
@@ -158,12 +176,7 @@ module.exports = function (app) {
       "estimateBoatSpeed",
       "updateCorrectionTable",
       "assumeCurrent",
-      "startWithNewTable",
       "stability",
-      "maxSpeed",
-      "speedStep",
-      "maxHeel",
-      "heelStep",
       "headingSource",
       "boatSpeedSource",
       "COGSource",
@@ -172,9 +185,6 @@ module.exports = function (app) {
       "preventDuplication"
     ],
     sogFallback: {
-      "ui:widget": "checkbox"
-    },
-    startWithNewTable: {
       "ui:widget": "checkbox"
     },
     estimateBoatSpeed: {
@@ -189,18 +199,6 @@ module.exports = function (app) {
     assumeCurrent: {
       "ui:widget": "checkbox"
     },
-    heelStep: {
-      "ui:widget": "updown"
-    },
-    maxHeel: {
-      "ui:widget": "updown"
-    },
-    speedStep: {
-      "ui:widget": "updown"
-    },
-    maxSpeed: {
-      "ui:widget": "updown"
-    },
     mode: {
       "ui:widget": "select"
     },
@@ -211,12 +209,12 @@ module.exports = function (app) {
 
   plugin.registerWithRouter = function (router) {
     app.debug('registerWithRouter');
+    readOptions(); // pre-load so /api/settings works before start()
 
     router.get('/getResults', (req, res) => {
       if (!isRunning) {
         res.status(503).json({ error: "Plugin is not running" });
-      }
-      else {
+      } else {
         res.json(reportFull.report());
       }
     });
@@ -224,10 +222,124 @@ module.exports = function (app) {
     router.get('/getVectors', (req, res) => {
       if (!isRunning) {
         res.status(503).json({ error: "Plugin is not running" });
-      }
-      else {
+      } else {
         res.json(reportVector.report());
       }
+    });
+
+    // --- Settings API ---
+    router.get('/api/settings', (req, res) => {
+      res.json({ ...options, ...changedOptions });
+    });
+
+    router.put('/api/settings', (req, res) => {
+      const body = req.body;
+      if (!body || typeof body !== 'object') {
+        return res.status(400).json({ error: 'JSON body required' });
+      }
+      // Reject keys managed by the table manager
+      const blocked = ['correctionTable', 'tableName'];
+      for (const k of blocked) {
+        if (k in body) {
+          return res.status(400).json({ error: `Key '${k}' is managed via the table manager` });
+        }
+      }
+      changedOptions = { ...changedOptions, ...body };
+      res.json({ ...options, ...changedOptions });
+    });
+
+    // --- Correction Table Manager API ---
+
+    // List all table files in dataDir
+    router.get('/api/tables', (req, res) => {
+      const dataDir = app.getDataDirPath();
+      let files;
+      try { files = fs.readdirSync(dataDir).filter(f => f.endsWith('.json')); }
+      catch (e) { return res.json([]); }
+      const activeName = options.tableName || 'correctionTable';
+      const tables = [];
+      for (const file of files) {
+        try {
+          const data = Table2D.readFromFile(path.join(dataDir, file));
+          if (data && data.row && data.col && Array.isArray(data.table)) {
+            const name = file.replace(/\.json$/, '');
+            tables.push({ name, active: name === activeName });
+          }
+        } catch (e) { /* skip non-table files */ }
+      }
+      res.json(tables);
+    });
+
+    // Create a new table and hot-swap it
+    router.post('/api/tables/create', (req, res) => {
+      const body = req.body || {};
+      const name = (body.name || '').trim();
+      if (!name || !/^[\w-]+$/.test(name))
+        return res.status(400).json({ error: 'Name must be alphanumeric (underscores and hyphens allowed)' });
+      const dims = ['maxSpeed', 'speedStep', 'maxHeel', 'heelStep'];
+      for (const f of dims) {
+        if (!Number.isFinite(body[f]) || body[f] <= 0)
+          return res.status(400).json({ error: `Invalid or missing field: ${f}` });
+      }
+      const row = { min: 0, max: SI.fromKnots(body.maxSpeed), step: SI.fromKnots(body.speedStep) };
+      const col = { min: -SI.fromDegrees(body.maxHeel), max: SI.fromDegrees(body.maxHeel), step: SI.fromDegrees(body.heelStep) };
+      const newTable = new CorrectionTable(name, row, col, options.stability || 7);
+      newTable.setDisplayAttributes({ label: name });
+      saveTable(newTable, path.join(app.getDataDirPath(), name + '.json'));
+      if (isRunning) swapTable(newTable);
+      saveTableName(name);
+      res.json({ name });
+    });
+
+    // Load a saved table and make it active
+    router.post('/api/tables/load', (req, res) => {
+      const body = req.body || {};
+      const name = (body.name || '').trim();
+      if (!name || !/^[\w-]+$/.test(name))
+        return res.status(400).json({ error: 'Invalid table name' });
+      const filePath = path.join(app.getDataDirPath(), name + '.json');
+      const fileData = Table2D.readFromFile(filePath);
+      if (!fileData) return res.status(404).json({ error: `Table '${name}' not found` });
+      const loadedTable = CorrectionTable.fromJSON(fileData, options.stability || 7);
+      loadedTable.setDisplayAttributes({ label: name });
+      if (isRunning) swapTable(loadedTable);
+      saveTableName(name);
+      res.json({ name });
+    });
+
+    // Copy active table under a new name and hot-swap to it
+    router.post('/api/tables/copy', (req, res) => {
+      if (!isRunning || !table) return res.status(503).json({ error: 'Plugin is not running' });
+      const body = req.body || {};
+      const newName = (body.newName || '').trim();
+      if (!newName || !/^[\w-]+$/.test(newName))
+        return res.status(400).json({ error: 'Name must be alphanumeric (underscores and hyphens allowed)' });
+      const data = table.toJSON();
+      data.id = newName;
+      const copiedTable = CorrectionTable.fromJSON(data, options.stability || 7);
+      copiedTable.setDisplayAttributes({ label: newName });
+      saveTable(copiedTable, path.join(app.getDataDirPath(), newName + '.json'));
+      swapTable(copiedTable);
+      saveTableName(newName);
+      res.json({ name: newName });
+    });
+
+    // Resize the active table (resamples onto new grid, preserves name)
+    router.post('/api/tables/resize', (req, res) => {
+      if (!isRunning || !table) return res.status(503).json({ error: 'Plugin is not running' });
+      const body = req.body || {};
+      const dims = ['maxSpeed', 'speedStep', 'maxHeel', 'heelStep'];
+      for (const f of dims) {
+        if (!Number.isFinite(body[f]) || body[f] <= 0)
+          return res.status(400).json({ error: `Invalid or missing field: ${f}` });
+      }
+      const newRow = { min: 0, max: SI.fromKnots(body.maxSpeed), step: SI.fromKnots(body.speedStep) };
+      const newCol = { min: -SI.fromDegrees(body.maxHeel), max: SI.fromDegrees(body.maxHeel), step: SI.fromDegrees(body.heelStep) };
+      const resized = CorrectionTable.resampleFromJSON(table.toJSON(), newRow, newCol, options.stability || 7, 1e-4);
+      resized.setDisplayAttributes({ label: resized.id });
+      saveTable(resized, path.join(app.getDataDirPath(), resized.id + '.json'));
+      swapTable(resized);
+      res.json({ name: resized.id });
     });
 
   }
@@ -235,17 +347,20 @@ module.exports = function (app) {
   plugin.start = (settings) => {
     app.setPluginStatus("Starting");
     app.debug("Starting");
-    table = loadTable(settings);
+    readOptions(); // pick up any saves since registerWithRouter ran
+    const tableName = options.tableName || 'correctionTable';
+    const tableFilePath = path.join(app.getDataDirPath(), tableName + '.json');
+    table = loadTable(options, tableFilePath);
 
     //#region Handler and Polar Initialization
     let smootherOptions = { timeConstant: 1, processVariance: 1, measurementVariance: 20, timeSpan: 5 };
 
     // heading
-    smoothedHeading = new SmoothedHeading(app, plugin.id, settings.headingSource, true, MovingAverageSmoother, smootherOptions);
+    smoothedHeading = new SmoothedHeading(app, plugin.id, options.headingSource, true, MovingAverageSmoother, smootherOptions);
     rawHeading = smoothedHeading.polar.angleHandler;
 
     //attitude
-    smoothedAttitude = new SmoothedAttitude(app, plugin.id, settings.attitudeSource, true, MovingAverageSmoother, smootherOptions);
+    smoothedAttitude = new SmoothedAttitude(app, plugin.id, options.attitudeSource, true, MovingAverageSmoother, smootherOptions);
     rawAttitude = smoothedAttitude.handler;
 
 
@@ -253,7 +368,9 @@ module.exports = function (app) {
     // send metadata for current
     MessageHandler.setMeta(app, plugin.id, "environment.current.drift", {units: "m/s", type: "number", description: "Speed of the current"});
     MessageHandler.setMeta(app, plugin.id, "environment.current.setTrue", { units: "rad", type: "number", description: "Direction of the current" });
-    rawCurrent = new Polar("current", "self.environment.current.drift", "self.environment.current.setTrue");
+    rawCurrent = new Polar(app, plugin.id, "current");
+    rawCurrent.configureMagnitude("self.environment.current.drift");
+    rawCurrent.configureAngle("self.environment.current.setTrue");
     rawCurrent.setDisplayAttributes({ label: "current", plane: "Ground" });
     rawCurrent.setAngleRange('0to2pi');
     smoothedCurrent = new PolarSmoother("currentDamped", rawCurrent, KalmanSmoother, { processVariance: 0.000001, measurementVariance: 0.01 });
@@ -282,63 +399,71 @@ module.exports = function (app) {
 
 
     // boat speed
-    smoothedBoatSpeed = new SmoothedSpeedThroughWater(app, plugin.id, settings.boatSpeedSource, true, MovingAverageSmoother, smootherOptions, !settings.preventDuplication);
+    smoothedBoatSpeed = new SmoothedSpeedThroughWater(app, plugin.id, options.boatSpeedSource, !options.preventDuplication, MovingAverageSmoother, smootherOptions);
     rawBoatSpeed = smoothedBoatSpeed.polar;
-    correctedBoatSpeed = new Polar("correctedBoatSpeed", "navigation.speedThroughWater", "navigation.leewayAngle");
-    correctedBoatSpeed.setDisplayAttributes({ label: "corrected boat speed", plane: "Boat" });
-    boatSpeedRefGround = new Polar("boatSpeedRefGround");
-    boatSpeedRefGround.setDisplayAttributes("Boat speed over ground", "Ground");
- 
+    correctedBoatSpeed = new Polar(app, plugin.id, "correctedBoatSpeed");
+    correctedBoatSpeed.configureMagnitude("navigation.speedThroughWater");
+    correctedBoatSpeed.configureAngle("navigation.leewayAngle");
+    correctedBoatSpeed.setDisplayAttributes({ label: "Corrected boatspeed / Leeway", plane: "Boat", group: 'estimation-out' });
+    boatSpeedRefGround = new Polar(app, plugin.id, "boatSpeedRefGround");
+    boatSpeedRefGround.setDisplayAttributes({ label: "Boat speed over ground", plane: "Ground", group: 'estimation-intermediate' });
+
     // ground speed
-    smoothedGroundSpeed = new SmoothedGroundSpeed(app, plugin.id, settings.SOGSource, true, MovingAverageSmoother, smootherOptions, !settings.preventDuplication);
+    smoothedGroundSpeed = new SmoothedGroundSpeed(app, plugin.id, options.SOGSource, true, MovingAverageSmoother, smootherOptions);
     rawGroundSpeed = smoothedGroundSpeed.polar;
 
     // correction vector
-    speedCorrection = new Polar("speedCorrection");
-    speedCorrection.setDisplayAttributes("speed correction", "Boat");
-    speedCorrection.setDisplayAttributes({ label: "speed correction", plane: "Boat" });
+    speedCorrection = new Polar(app, plugin.id, "speedCorrection");
+    speedCorrection.setDisplayAttributes({ label: "speed correction", plane: "Boat", group: 'estimation-intermediate' });
 
     // residual
-    residual = new Polar("residual");
-    residual.setDisplayAttributes({ label: "residual", plane: "Ground" });
+    residual = new Polar(app, plugin.id, "residual");
+    residual.setDisplayAttributes({ label: "residual", plane: "Ground", group: 'learning-intermediate' });
+
+    // group tags for UI section routing
+    rawHeading.setDisplayAttribute('group', 'input');
+    rawAttitude.setDisplayAttribute('group', 'input');
+    rawBoatSpeed.setDisplayAttribute('group', 'input');
+    rawGroundSpeed.setDisplayAttributes({ label: 'Groundspeed', group: 'input' });
+    smoothedBoatSpeed.setDisplayAttribute('group', 'learning-in');
+    smoothedGroundSpeed.setDisplayAttributes({ label: 'Groundspeed (smoothed)', group: 'learning-in' });
+    smoothedHeading.setDisplayAttribute('group', 'learning-in');
+    smoothedAttitude.setDisplayAttribute('group', 'learning-in');
+    smoothedCurrent.setDisplayAttributes({ label: "Current", plane: "Ground", group: 'estimation-out' });
 
     //#endregion
 
     //#region Reporting
     reportFull = new Reporter();
 
-    if (settings.estimateBoatSpeed) {
+    if (options.estimateBoatSpeed) {
       reportFull.addDelta(rawHeading);
       reportFull.addAttitude(rawAttitude);
       reportFull.addPolar(rawBoatSpeed);
       reportFull.addPolar(speedCorrection);
+      reportFull.addPolar(boatSpeedRefGround);
       reportFull.addPolar(correctedBoatSpeed);
       reportFull.addPolar(rawGroundSpeed);
       reportFull.addPolar(smoothedCurrent);
     }
-    if (settings.updateCorrectionTable) {
+    if (options.updateCorrectionTable) {
       reportFull.addDelta(smoothedHeading);
       reportFull.addAttitude(smoothedAttitude);
       reportFull.addPolar(smoothedBoatSpeed);
       reportFull.addPolar(smoothedGroundSpeed);
-
-        if (settings.assumeCurrent) {
-          reportFull.addPolar(boatSpeedRefGround);
-          reportFull.addPolar(smoothedCurrent);
-        }
-      reportFull.addPolar(speedCorrection);
+      if (options.assumeCurrent) {
+        reportFull.addPolar(smoothedCurrent);
+      }
       reportFull.addPolar(residual);
     }
     reportFull.addTable(table);
 
     // Make reporting object for webApp
-
-
     reportVector = new Reporter();
     reportVector.addDelta(rawHeading);
     reportVector.addPolar(residual);
     reportVector.addPolar(speedCorrection);
-    if (settings.assumeCurrent) reportVector.addPolar(smoothedCurrent);
+    if (options.assumeCurrent) reportVector.addPolar(smoothedCurrent);
     reportVector.addPolar(correctedBoatSpeed);
     reportVector.addPolar(rawBoatSpeed);
     reportVector.addPolar(rawGroundSpeed);
@@ -351,27 +476,29 @@ module.exports = function (app) {
 
     let lastSave = 0;
     smoothedBoatSpeed.onChange = () => {
+      // Drain any pending option changes before calculating
+      if (Object.keys(changedOptions).length) applyOptionChanges();
+
       const wellUnderway = started < new Date() - 60 * 1000;
-      const minSpeed = SI.fromKnots(settings.speedStep / 2);
-      
-      if (settings.sogFallback && fallingBackToSog( minSpeed) ){
+      const minSpeed = SI.fromKnots(options.speedStep / 2);
+
+      if (options.sogFallback && fallingBackToSog(minSpeed)) {
         app.setPluginStatus("Falling back to Speed Over Ground");
         app.debug("Falling back");
-         return;
+        return;
       }
       if (!wellUnderway) {
         app.setPluginStatus("Stabilizing");
-      }
-      else {
+      } else {
         app.setPluginStatus("Running");
       }
-      if (settings.estimateBoatSpeed) correct(wellUnderway);
-      if (settings.updateCorrectionTable && wellUnderway) {
-        updateTable(settings.assumeCurrent, minSpeed);
-        // Save correction table periodically 
+      if (options.estimateBoatSpeed) correct(wellUnderway);
+      if (options.updateCorrectionTable && wellUnderway) {
+        updateTable(options.assumeCurrent, minSpeed);
+        // Save correction table periodically
         const now = new Date();
         if (now - lastSave > 5 * 1000) {
-          saveTable(settings, table);
+          saveTable(table, path.join(app.getDataDirPath(), table.id + '.json'));
           lastSave = now;
         }
       }
@@ -381,17 +508,17 @@ module.exports = function (app) {
   plugin.stop = () => {
     return new Promise((resolve, reject) => {
       try {
-        smoothedHeading = smoothedHeading?.terminate(app);
-        stability = stability?.terminate?.(app);
-        smoothedAttitude = smoothedAttitude?.terminate(app);
-        rawCurrent = rawCurrent?.terminate(app);
-        smoothedCurrent = smoothedCurrent?.terminate?.(app);
-        smoothedBoatSpeed = smoothedBoatSpeed?.terminate(app);
-        correctedBoatSpeed = correctedBoatSpeed?.terminate(app);
-        boatSpeedRefGround = boatSpeedRefGround?.terminate(app);
-        smoothedGroundSpeed = smoothedGroundSpeed?.terminate(app);
-        speedCorrection = speedCorrection?.terminate(app);
-        residual = residual?.terminate(app);
+        smoothedHeading = smoothedHeading?.terminate();
+        stability = stability?.terminate?.();
+        smoothedAttitude = smoothedAttitude?.terminate();
+        rawCurrent = rawCurrent?.terminate();
+        smoothedCurrent = smoothedCurrent?.terminate?.();
+        smoothedBoatSpeed = smoothedBoatSpeed?.terminate();
+        correctedBoatSpeed = correctedBoatSpeed?.terminate();
+        boatSpeedRefGround = boatSpeedRefGround?.terminate();
+        smoothedGroundSpeed = smoothedGroundSpeed?.terminate();
+        speedCorrection = speedCorrection?.terminate();
+        residual = residual?.terminate();
         reportFull = null;
         reportVector = null;
         table = null;
@@ -505,17 +632,15 @@ module.exports = function (app) {
    * @param {Object} col - The expected column configuration ({ min, max, step }).
    * @returns {boolean} True if the table matches the configuration, false otherwise.
    */
-  function enforceConsistancy(options, row, col) {
-    if (!options?.correctionTable) return false;
-    table = options.correctionTable;
-    if (!table) return false;
-    if (!table.row) return false;
-    if (table.row.min != row.min) return false;
-    if (table.row.max != row.max) return false;
-    if (table.row.step != row.step) return false;
-    if (table.col.min != col.min) return false;
-    if (table.col.max != col.max) return false;
-    if (table.col.step != col.step) return false;
+  function enforceConsistancy(data, row, col) {
+    if (!data) return false;
+    if (!data.row) return false;
+    if (data.row.min != row.min) return false;
+    if (data.row.max != row.max) return false;
+    if (data.row.step != row.step) return false;
+    if (data.col.min != col.min) return false;
+    if (data.col.max != col.max) return false;
+    if (data.col.step != col.step) return false;
     return true;
   }
 
@@ -529,30 +654,21 @@ module.exports = function (app) {
    * @param {Object} options - The plugin options containing correction table settings and parameters.
    * @returns {CorrectionTable} The loaded or newly created CorrectionTable instance.
    */
-  function loadTable(options) {
-    const row = { min: 0, max: SI.fromKnots(options.maxSpeed), step: SI.fromKnots(options.speedStep) };
-    const col = { min: -SI.fromDegrees(options.maxHeel), max: SI.fromDegrees(options.maxHeel), step: SI.fromDegrees(options.heelStep) };
-    let table;
+  function loadTable(options, filePath) {
     const stability = (options.stability !== undefined) ? options.stability : 6;
-    const VAR_FLOOR = 1e-4;
-    if (enforceConsistancy(options, row, col) && !options.startWithNewTable) {
-      table = CorrectionTable.fromJSON(options.correctionTable, stability);
-      app.debug("Correction table loaded");
-    }
-    else if (options.correctionTable && !options.startWithNewTable) {
-      // Resample existing table to new dimensions conservatively (N=0, diag covariance with floor)
-      table = CorrectionTable.resampleFromJSON(options.correctionTable, row, col, stability, VAR_FLOOR);
-      app.debug("Correction table migrated to new dimensions");
-      options.startWithNewTable = false;
-      saveTable(options, table);
+    const fileData = Table2D.readFromFile(filePath);
+    let table;
+    if (fileData) {
+      table = CorrectionTable.fromJSON(fileData, stability);
+      app.debug("Correction table loaded: " + (fileData.id || filePath));
     } else {
-      table = new CorrectionTable("correctionTable", row, col, stability);
-      app.debug("Correction table created");
-      // doStartFresh is not user-settable, so no need to reset it here
-      options.startWithNewTable = false;
-      saveTable(options, table);
+      const name = options.tableName || 'correctionTable';
+      const row = { min: 0, max: SI.fromKnots(DEFAULT_DIMS.maxSpeed), step: SI.fromKnots(DEFAULT_DIMS.speedStep) };
+      const col = { min: -SI.fromDegrees(DEFAULT_DIMS.maxHeel), max: SI.fromDegrees(DEFAULT_DIMS.maxHeel), step: SI.fromDegrees(DEFAULT_DIMS.heelStep) };
+      table = new CorrectionTable(name, row, col, stability);
+      app.debug("Correction table created: " + name);
     }
-    table.setDisplayAttributes({ label: "correction table" });
+    table.setDisplayAttributes({ label: table.id });
     return table;
   }
 
@@ -567,9 +683,40 @@ module.exports = function (app) {
    * @param {CorrectionTable} correctionTable - The correction table instance to save.
    * @returns {Date} The date and time when the table was saved.
    */
-  function saveTable(options, correctionTable) {
-  options.correctionTable = correctionTable.toJSON();
-  app.savePluginOptions(options, () => { /*app.debug("Correction table saved")*/; });
+  function saveTable(correctionTable, filePath) {
+    correctionTable.saveToFile(filePath);
+  }
+
+  /**
+   * Drains changedOptions into options and hot-applies each change where possible.
+   * Source changes are applied in-place on existing handlers; flag changes take
+   * effect immediately since onChange reads from options.* directly.
+   */
+  function applyOptionChanges() {
+    for (const key of Object.keys(changedOptions)) {
+      const value = changedOptions[key];
+      options[key] = value;
+
+      // Hot-apply source changes by mutating handler references in-place
+      if (smoothedHeading && key === 'headingSource') {
+        smoothedHeading.polar.angleHandler.source = value;
+        smoothedHeading.polar.magnitudeHandler.source = value;
+      } else if (smoothedAttitude && key === 'attitudeSource') {
+        smoothedAttitude.handler.source = value;
+      } else if (smoothedBoatSpeed && key === 'boatSpeedSource') {
+        smoothedBoatSpeed.polar.magnitudeHandler.source = value;
+      } else if (smoothedGroundSpeed && key === 'SOGSource') {
+        smoothedGroundSpeed.polar.magnitudeHandler.source = value;
+      } else if (key === 'preventDuplication') {
+        if (smoothedBoatSpeed) smoothedBoatSpeed.polar.magnitudeHandler.passOn = !value;
+      }
+      // All other keys (sogFallback, estimateBoatSpeed, updateCorrectionTable,
+      // assumeCurrent, stability, startWithNewTable, COGSource) are read
+      // directly from options.* so no extra action needed.
+
+      delete changedOptions[key];
+    }
+    saveOptions();
   }
 
   return plugin;

@@ -28,7 +28,7 @@ class CorrectionTable extends Table2D{
    * @returns {CorrectionTable}
    */
   static resample(oldTable, newRow, newCol, stability = 5, varianceFloor = 1e-4) {
-    const newTable = new CorrectionTable("correctionTable", newRow, newCol, stability);
+    const newTable = new CorrectionTable(oldTable.id, newRow, newCol, stability);
 
     const nRows = Math.round((newRow.max - newRow.min) / newRow.step) + 1;
     const nCols = Math.round((newCol.max - newCol.min) / newCol.step) + 1;

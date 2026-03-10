@@ -1,447 +1,588 @@
-const API_BASE_URL = "/plugins/speedandcurrent"; // Adjust based on your server configuration
-import TableRenderer from './TableRenderer.js';
+﻿import TableRenderer from './TableRenderer.js';
 
+const API_BASE = '/plugins/speedandcurrent';
 
-let updateInterval = 1000;
-let updateTimer;
-let updatesPaused = false;
+// ─── Unit conversion (knots / degrees, fixed) ───────────────────────────────
+const vAngle = 180 / Math.PI;
+const dAngle = 0;
+const vSpeed = 1.943844;
+const dSpeed = 1;
 
-let vAngle = 1;
-let dAngle = 2;
-let vSpeed = 1;
-let dSpeed = 1;
+function cAngle(v) { return (v * vAngle).toFixed(dAngle); }
+function cSpeed(v) { return (v * vSpeed).toFixed(dSpeed); }
 
+// ─── TableRenderer instance ───────────────────────────────────────────────────
+const tableRenderer = new TableRenderer();
 
-const LS_KEYS = {
-  speed: 'sc_speed_unit',
-  angle: 'sc_angle_unit',
-  color: 'sc_color_mode',
-  metrics: 'sc_table_metrics'
+// ─── Live state (indexed + raw arrays) ───────────────────────────────────────
+let state = {
+  polarsAll: [], deltasAll: [], attitudesAll: [],
+  polarsById: {}, deltasById: {}, attitudesById: {},
+  tablesById: {}
 };
 
-export function handleSpeedUnitChange(value) {
-  if (value == "knots") {
-    vSpeed = 1.943844;
-    dSpeed = 1;
-    localStorage.setItem(LS_KEYS.speed, 'knots');
-    return;
-  }
-  if (value == "kmh") {
-    vSpeed = 3.6;
-    dSpeed = 1;
-    localStorage.setItem(LS_KEYS.speed, 'kmh');
-    return;
-  }
-  vSpeed = 1;
-  dSpeed = 1;
-  localStorage.setItem(LS_KEYS.speed, 'ms');
+function normaliseState(data) {
+  const polarsAll    = (data.polars    || []).filter(p => p && p.id);
+  const deltasAll    = (data.deltas    || []).filter(d => d && d.id);
+  const attitudesAll = (data.attitudes || []).filter(a => a && a.id);
+  const tablesById   = {};
+  (data.tables || []).forEach(t => { if (t && t.id) tablesById[t.id] = t; });
+  // indexed versions (last-write-wins when IDs collide)
+  const polarsById    = {};
+  const deltasById    = {};
+  const attitudesById = {};
+  polarsAll   .forEach(p => { polarsById[p.id]    = p; });
+  deltasAll   .forEach(d => { deltasById[d.id]    = d; });
+  attitudesAll.forEach(a => { attitudesById[a.id] = a; });
+  state = { polarsAll, deltasAll, attitudesAll, polarsById, deltasById, attitudesById, tablesById };
 }
 
-export function handleAngleUnitChange(value) {
-  if (value == "degrees") {
-    vAngle = 180 / Math.PI;
-    dAngle = 0;
-    localStorage.setItem(LS_KEYS.angle, 'degrees');
-    return;
-  }
-  vAngle = 1;
-  dAngle = 2;
-  localStorage.setItem(LS_KEYS.angle, 'radians');
+function isStale(item) {
+  if (!item) return true;
+  if (item.stale === true) return true;
+  if (item.displayAttributes && item.displayAttributes.stale === true) return true;
+  return false;
 }
 
+// ─── Config (live settings mirror) ───────────────────────────────────────────
+let config = null;
 
-
-// Removed table style switch; rendering is driven by metrics selection.
-
-export function handleColorModeChange(value) {
-  if (tableRenderer && tableRenderer.setColorMode) {
-    tableRenderer.setColorMode(value);
-    localStorage.setItem(LS_KEYS.color, value);
-    // re-render immediately using last data if available
-    // fetchAndUpdateData will repaint next tick; do a quick repaint now if cached
-    // (Simplest approach: trigger fetch)
-    fetchAndUpdateData();
-  }
-}
-
-function cAngle(value) {
-  value *= vAngle;
-  return value.toFixed(dAngle);
-}
-
-function cSpeed(value) {
-  value *= vSpeed;
-  return value.toFixed(dSpeed);
-}
-
-let selectedMetrics = {
-  correction: true,
-  factor: true,
-  leeway: true,
-  trace: false,
-  N: true,
-};
-
-function buildCellContent(parts) {
-  // parts is array of strings; filter falsy and join
-  return parts.filter(Boolean).join('\n');
-}
-
-function cartesian(correction, speed, heel) {
-  if (correction.N == 0) return null;
-  const bits = [];
-  if (selectedMetrics.correction) {
-    bits.push(` <div><strong>X:</strong> ${cSpeed(correction.x)}</div>`);
-    bits.push(` <div><strong>Y:</strong> ${cSpeed(correction.y)}</div>`);
-  }
-  if (selectedMetrics.trace && Number.isFinite(correction.trace)) {
-    bits.push(` <div><strong>trace:</strong> ${Number(correction.trace).toPrecision(2)}</div>`);
-  }
-  if (selectedMetrics.N) {
-    bits.push(` <div><strong>N:</strong> ${correction.N}</div>`);
-  }
-  return buildCellContent(bits);
-}
-
-function polar(correction, speed, heel) {
-  if (speed == 0 || correction.N == 0) return null;
-  const bits = [];
-  // Prefer server-provided values when available
-  const factor = Number.isFinite(correction.factor) ? correction.factor : (speed > 0 ? (correction.x + speed) / speed : 0);
-  const leewayRad = Number.isFinite(correction.leeway) ? correction.leeway : Math.atan2(correction.y, speed + correction.x);
-  const leewayDisplay = leewayRad; // signed value; color uses |leeway|
-
-  if (selectedMetrics.factor) {
-    bits.push(` <div><strong>factor:</strong> ${factor.toFixed(2)}</div>`);
-  }
-  if (selectedMetrics.leeway) {
-    bits.push(` <div><strong>leeway:</strong> ${cAngle(leewayDisplay)}</div>`);
-  }
-  if (selectedMetrics.trace && Number.isFinite(correction.trace)) {
-    bits.push(` <div><strong>trace:</strong> ${Number(correction.trace).toPrecision(2)}</div>`);
-  }
-  if (selectedMetrics.N) {
-    bits.push(` <div><strong>N:</strong> ${correction.N}</div>`);
-  }
-  return buildCellContent(bits);
-}
-
-function unifiedCellRenderer(correction, speed, heel) {
-  // Combines polar-oriented metrics and cartesian correction based on selections
-  if (correction.N == 0) return null;
-  const bits = [];
-  // Polar-ish metrics
-  if (selectedMetrics.factor && (speed !== 0)) {
-    const factor = Number.isFinite(correction.factor) ? correction.factor : (speed > 0 ? (correction.x + speed) / speed : 0);
-    bits.push(` <div><strong>factor:</strong> ${factor.toFixed(2)}</div>`);
-  }
-  if (selectedMetrics.leeway && (speed !== 0)) {
-    const leewayRad = Number.isFinite(correction.leeway) ? correction.leeway : Math.atan2(correction.y, speed + correction.x);
-    bits.push(` <div><strong>leeway:</strong> ${cAngle(leewayRad)}</div>`);
-  }
-  // Cartesian correction (always available)
-  if (selectedMetrics.correction) {
-    bits.push(` <div><strong>X:</strong> ${cSpeed(correction.x)}</div>`);
-    bits.push(` <div><strong>Y:</strong> ${cSpeed(correction.y)}</div>`);
-  }
-  if (selectedMetrics.trace && Number.isFinite(correction.trace)) {
-    bits.push(` <div><strong>trace:</strong> ${Number(correction.trace).toPrecision(2)}</div>`);
-  }
-  if (selectedMetrics.N) {
-    bits.push(` <div><strong>N:</strong> ${correction.N}</div>`);
-  }
-  return buildCellContent(bits);
-}
-
-
-
-async function getFromServer(endpoint) {
+// ─── HTTP helpers ─────────────────────────────────────────────────────────────
+async function apiGet(path) {
+  let res;
   try {
-    const response = await fetch(`${API_BASE_URL}/${endpoint}`, {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json'
-      },
-      credentials: 'same-origin' // include cookies for auth
-    });
-
-    const msgEl = document.getElementById("message");
-    const contentType = response.headers.get('content-type') || '';
-
-    // Auth errors: show friendly message and pause updates
-    if (response.status === 401 || response.status === 403) {
-      if (msgEl) {
-        msgEl.innerHTML = 'Not signed in. Please <a href="/">sign in</a> to the Signal K server, then reload this page.';
-      }
-      if (updateTimer) {
-        clearInterval(updateTimer);
-        updatesPaused = true;
-        const toggleButton = document.getElementById('toggle-updates');
-        if (toggleButton) toggleButton.textContent = "Resume";
-      }
-      return null;
-    }
-
-    // Service not running or other HTTP errors
-    if (!response.ok) {
-      if (response.status === 503) {
-        if (msgEl) msgEl.textContent = "Plugin is not running";
-      } else {
-        if (msgEl) msgEl.textContent = `Failed to fetch data (${response.status} ${response.statusText}).`;
-      }
-      return null;
-    }
-
-    // Only parse JSON when content-type matches
-    if (contentType.includes('application/json')) {
-      const data = await response.json();
-      if (msgEl) msgEl.textContent = "";
-      return data;
-    } else {
-      // Likely an HTML login page or plain text error
-      if (msgEl) {
-        msgEl.innerHTML = 'Unexpected server response. If you are not signed in, please <a href="/">sign in</a> to the Signal K server, then reload.';
-      }
-      return null;
-    }
-  } catch (error) {
-    console.error("Failed to fetch data from server:", error);
-    const msgEl = document.getElementById("message");
-    if (msgEl) msgEl.textContent = `Network error: ${error && error.message ? error.message : String(error)}`;
+    res = await fetch(`${API_BASE}${path}`, { credentials: 'same-origin' });
+  } catch (err) {
+    showMessage(`Cannot reach server: ${err.message}`);
     return null;
   }
+  if (res.status === 401 || res.status === 403) {
+    showMessage('Not signed in. Please <a href="/">sign in</a>.', true);
+    return null;
+  }
+  if (res.status === 503) { showMessage('Plugin is not running.'); return null; }
+  if (!res.ok) { showMessage(`Server error ${res.status}`); return null; }
+  const ct = res.headers.get('content-type') || '';
+  if (!ct.includes('application/json')) { showMessage('Unexpected server response.'); return null; }
+  showMessage('');
+  return res.json();
 }
 
-
-
-function updateOptions(data) {
-  const optionsContent = document.getElementById('options-content');
-  optionsContent.innerHTML = ''; // Clear previous content
-
-  const table = document.createElement('table');
-  const headerRow = document.createElement('tr');
-  headerRow.innerHTML = '<th>Option Name</th><th>Value</th>';
-  table.appendChild(headerRow);
-
-  Object.entries(data.options).forEach(([key, value]) => {
-    const type = typeof value;
-    if (type === 'string' || type === 'number' || type === 'boolean') {
-
-      const row = document.createElement('tr');
-      row.innerHTML = `<td>${key}</td><td>${value}</td>`;
-      table.appendChild(row);
-    };
+// PUT /api/settings: server returns full merged config — store it and re-render.
+async function apiPutSettings(body) {
+  const res = await fetch(`${API_BASE}/api/settings`, {
+    method: 'PUT', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
   });
-
-  optionsContent.appendChild(table);
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(e.error || res.statusText);
+  }
+  config = await res.json();
+  renderSettingsPanel();
 }
 
-
-function updatePolar(data) {
-  const stepsList = document.getElementById('speeds-container');
-  stepsList.innerHTML = ''; // Clear previous steps
-
-  const table = document.createElement('table');
-  table.classList.add('polar');
-  const headerRow = document.createElement('tr');
-  headerRow.innerHTML = '<th>Label</th><th>Speed</th><th>Angle</th><th>Trace</th>';
-  table.appendChild(headerRow);
-
-  data.polars.forEach(polar => {
-    const row = document.createElement('tr');
-    if (polar.id) {
-      row.id = polar.id;
-    }
-    if (polar.displayAttributes.unstable) {
-      row.classList.add('unstable');
-    }
-  row.innerHTML = `<td>${polar.displayAttributes.label}</td><td>${cSpeed(polar.magnitude)}</td><td>${cAngle(polar.angle)}</td><td>${(polar.trace !== undefined && polar.trace !== null ? Number(polar.trace).toPrecision(2) : '')}</td>`;
-    table.appendChild(row);
+async function apiPost(path, body) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
   });
-
-  stepsList.appendChild(table);
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(e.error || res.statusText);
+  }
+  return res.json();
 }
 
-function updateDelta(data) {
-  const stepsList = document.getElementById('delta-container');
-  stepsList.innerHTML = ''; // Clear previous steps
+function showMessage(html, isLink = false) {
+  const el = document.getElementById('message');
+  if (!el) return;
+  if (isLink) el.innerHTML = html;
+  else el.textContent = html;
+}
 
-  const table = document.createElement('table');
-  table.classList.add('delta');
-  const headerRow = document.createElement('tr');
-  headerRow.innerHTML = '<th>Label</th><th>Value</th><th>Variance</th>';
-  table.appendChild(headerRow);
+// ─── Settings: paramMeta ──────────────────────────────────────────────────────
+// Each entry: { label, type, min?, max?, step?, default?, sourceOf? }
+// sourceOf: { type:'polar'|'delta'|'attitude', id, field? }
+//   field defaults to 'magnitudeSources' for polars, 'sources' for delta/attitude.
+const paramMeta = {
+  estimateBoatSpeed:     { label: 'Estimate boat speed',                  type: 'boolean' },
+  updateCorrectionTable: { label: 'Update correction table',              type: 'boolean' },
+  assumeCurrent:         { label: 'Assume current during update',         type: 'boolean' },
+  sogFallback:           { label: 'Groundspeed fallback',                 type: 'boolean', description: 'Output Groundspeed as Boatspeed when the paddlewheel sensor is malfunctioning or stalled.' },
+  preventDuplication:    { label: 'Prevent speed duplication',            type: 'boolean', description: 'Replace the raw sensor boatspeed on the Signal K bus with the corrected value, preventing duplicate conflicting values.' },
+  stability:             { label: 'Stability (1–20)',                     type: 'number', min: 1, max: 20, step: 1, default: 7, description: 'How quickly the correction table adapts to new observations. Higher values mean slower, more stable changes.' },
+  headingSource:  { label: 'Heading source',          type: 'source', sourceOf: { type: 'delta',   id: 'headingAngle', field: 'sources' } },
+  boatSpeedSource:{ label: 'Boat speed source',       type: 'source', sourceOf: { type: 'polar',   id: 'boatSpeed',   field: 'magnitudeSources' } },
+  SOGSource:      { label: 'Groundspeed source',      type: 'source', sourceOf: { type: 'polar',   id: 'groundSpeed', field: 'magnitudeSources' } },
+  attitudeSource: { label: 'Attitude source',         type: 'source', sourceOf: { type: 'attitude',id: 'attitude',    field: 'sources' } },
+};
 
-  data.deltas.forEach(delta => {
-    const row = document.createElement('tr');
-    if (delta.id) {
-      row.id = delta.id;
+// Settings groups for each UI section
+const INPUTS_SOURCE_KEYS      = ['headingSource','boatSpeedSource','SOGSource','attitudeSource'];
+const ESTIMATION_SETTING_KEYS = ['sogFallback','preventDuplication'];
+const LEARNING_SETTING_KEYS   = ['stability','assumeCurrent'];
+
+function getStateItem(sourceOf) {
+  if (!sourceOf) return null;
+  switch (sourceOf.type) {
+    case 'polar':    return state.polarsById[sourceOf.id];
+    case 'delta':    return state.deltasById[sourceOf.id];
+    case 'attitude': return state.attitudesById[sourceOf.id];
+    default:         return null;
+  }
+}
+
+function getSources(sourceOf) {
+  const item = getStateItem(sourceOf);
+  if (!item) return [];
+  const field = sourceOf.field || 'sources';
+  return Array.isArray(item[field]) ? item[field] : [];
+}
+
+// Build one settings control for a key.
+function createSettingControl(key, meta, value) {
+  if (meta.type === 'boolean') {
+    const lbl = document.createElement('label');
+    lbl.className = 'switch switch-text switch-primary';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.className = 'switch-input form-check-input'; cb.checked = !!value;
+    cb.addEventListener('change', () => apiPutSettings({ [key]: cb.checked }).catch(e => showMessage(`Save failed: ${e.message}`)));
+    const sl = document.createElement('span');
+    sl.className = 'switch-label'; sl.setAttribute('data-on', 'On'); sl.setAttribute('data-off', 'Off');
+    const sh = document.createElement('span');
+    sh.className = 'switch-handle';
+    lbl.appendChild(cb); lbl.appendChild(sl); lbl.appendChild(sh);
+    return lbl;
+  }
+
+  if (meta.type === 'number') {
+    const wrap = document.createElement('span');
+    const inp = document.createElement('input');
+    inp.type = 'number'; inp.className = 'form-control form-control-sm d-inline-block';
+    inp.style.width = '80px';
+    inp.value = value !== undefined ? value : (meta.default !== undefined ? meta.default : '');
+    if (meta.min !== undefined) inp.min = meta.min;
+    if (meta.max !== undefined) inp.max = meta.max;
+    if (meta.step !== undefined) inp.step = meta.step;
+    inp.addEventListener('change', () => {
+      const v = Number(inp.value);
+      if (Number.isFinite(v)) apiPutSettings({ [key]: v }).catch(e => showMessage(`Save failed: ${e.message}`));
+    });
+    wrap.appendChild(inp);
+    if (meta.default !== undefined && value !== meta.default) {
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-link btn-sm p-0 ms-1';
+      btn.title = `Reset to default (${meta.default})`;
+      btn.textContent = '↺';
+      btn.addEventListener('click', () => apiPutSettings({ [key]: meta.default }).catch(e => showMessage(`Save failed: ${e.message}`)));
+      wrap.appendChild(btn);
     }
-    if (delta.displayAttributes.unstable) {
-      row.classList.add('unstable');
+    return wrap;
+  }
+
+  if (meta.type === 'source') {
+    if (meta.disabled) {
+      const inp = document.createElement('input');
+      inp.type = 'text'; inp.className = 'form-control form-control-sm';
+      inp.value = (value || '').trim(); inp.disabled = true; inp.style.opacity = '0.5';
+      return inp;
     }
-  row.innerHTML = `<td>${delta.displayAttributes.label}</td><td>${cAngle(delta.value)}</td><td>${(delta.variance !== undefined && delta.variance !== null ? Number(delta.variance).toPrecision(2) : '')}</td>`;
-    table.appendChild(row);
+    const sel = document.createElement('select');
+    sel.className = 'form-select form-select-sm d-inline-block';
+    sel.style.width = '200px';
+    const blank = document.createElement('option');
+    blank.value = ''; blank.textContent = '(any)';
+    sel.appendChild(blank);
+    const sources = meta.sourceOf ? getSources(meta.sourceOf) : [];
+    sources.forEach(src => {
+      const opt = document.createElement('option');
+      opt.value = src; opt.textContent = src;
+      sel.appendChild(opt);
+    });
+    sel.value = (value || '').trim();
+    sel.addEventListener('change', () => {
+      apiPutSettings({ [key]: sel.value || ' ' }).catch(e => showMessage(`Save failed: ${e.message}`));
+    });
+    return sel;
+  }
+
+  // fallback: text input
+  const inp = document.createElement('input');
+  inp.type = 'text'; inp.className = 'form-control form-control-sm';
+  inp.value = (value || '').trim();
+  let debounce;
+  inp.addEventListener('input', () => {
+    clearTimeout(debounce);
+    debounce = setTimeout(() => apiPutSettings({ [key]: inp.value.trim() || ' ' }).catch(e => showMessage(`Save failed: ${e.message}`)), 600);
   });
-
-  stepsList.appendChild(table);
+  return inp;
 }
 
-function updateAttitude(data) {
-  const attitudeContainer = document.getElementById('attitude-container');
-  attitudeContainer.innerHTML = '';
-  const table = document.createElement('table');
-  table.classList.add('attitude');
-
-  const headerRow = document.createElement('tr');
-  headerRow.innerHTML = '<th>Label</th><th>roll</th><th>pitch</th><th>yaw</th>';
-  table.appendChild(headerRow);
-
-
-  data.attitudes.forEach(attitude => {
-    const row = document.createElement('tr');
-    if (attitude.id) {
-      row.id = attitude.id;
+function renderSettingsRows(tableId, keys) {
+  const table = document.getElementById(tableId);
+  const tbody = table && table.querySelector('tbody');
+  if (!tbody || !config) return;
+  tbody.innerHTML = '';
+  keys.forEach(key => {
+    const meta = paramMeta[key];
+    if (!meta) return;
+    const value = config[key];
+    const tr = document.createElement('tr');
+    const tdL = document.createElement('td');
+    tdL.textContent = meta.label;
+    if (meta.description) {
+      const desc = document.createElement('small');
+      desc.className = 'text-muted d-block';
+      desc.textContent = meta.description;
+      tdL.appendChild(desc);
     }
-    if (attitude.displayAttributes.unstable) {
-      row.classList.add('unstable');
-    }
-    row.innerHTML = `<td>${attitude.displayAttributes.label}</td><td>${cAngle(attitude.value.roll)}</td><td>${cAngle(attitude.value.pitch)}</td><td>${cAngle(attitude.value.yaw)}</td>`;
-    table.appendChild(row);
-  });
-  attitudeContainer.appendChild(table);
-}
-
-function updateTable(data) {
-  const tableContainer = document.getElementById('table-container');
-  tableContainer.innerHTML = '';
-    data.tables.forEach(table => {
-    const tableElement = tableRenderer.render(table);
-    tableContainer.appendChild(tableElement);
+    const tdC = document.createElement('td'); tdC.appendChild(createSettingControl(key, meta, value));
+    tr.appendChild(tdL); tr.appendChild(tdC);
+    tbody.appendChild(tr);
   });
 }
 
+function renderSectionToggles() {
+  if (!config) return;
+  [['toggle-estimateBoatSpeed', 'estimateBoatSpeed'], ['toggle-updateCorrectionTable', 'updateCorrectionTable']].forEach(([id, key]) => {
+    const cb = document.getElementById(id);
+    if (!cb) return;
+    cb.checked = !!config[key];
+    cb.onchange = () => apiPutSettings({ [key]: cb.checked }).catch(e => showMessage(`Save failed: ${e.message}`));
+  });
+}
 
+function renderSettingsPanel() {
+  if (!config) return;
+  renderSettingsRows('inputs-sources-table',      INPUTS_SOURCE_KEYS);
+  renderSettingsRows('estimation-settings-table', ESTIMATION_SETTING_KEYS);
+  renderSettingsRows('learning-settings-table',   LEARNING_SETTING_KEYS);
+  renderSectionToggles();
+}
 
+// ─── Live data rendering ─────────────────────────────────────────────────────
 
-async function fetchAndUpdateData() {
-  const data = await getFromServer('getResults'); // Updated endpoint
+function formatPolarValue(p) {
+  if (!p) return '—';
+  const spd = typeof p.magnitude === 'number' ? cSpeed(p.magnitude) : '—';
+  const ang = typeof p.angle    === 'number' ? cAngle(p.angle)      : '—';
+  return `${spd} kn / ${ang}°`;
+}
+
+function formatDeltaValue(d) {
+  if (!d || typeof d.value !== 'number') return '—';
+  const unit = d.displayAttributes && d.displayAttributes.unit;
+  return unit === 'm/s' ? `${cSpeed(d.value)} kn` : `${cAngle(d.value)}°`;
+}
+
+function formatAttitudeValue(a) {
+  const v = (a && a.value) || {};
+  const roll  = typeof v.roll  === 'number' ? cAngle(v.roll)  : '—';
+  const pitch = typeof v.pitch === 'number' ? cAngle(v.pitch) : '—';
+  return `roll ${roll}° / pitch ${pitch}°`;
+}
+
+function itemLabel(item) {
+  return (item.displayAttributes && item.displayAttributes.label) || item.id;
+}
+
+function buildDataTable(rows) {
+  const tbl = document.createElement('table');
+  tbl.className = 'table table-sm table-borderless mb-0';
+  const tbody = document.createElement('tbody');
+  rows.forEach(row => {
+    const tr = document.createElement('tr');
+    if (row.stale) tr.className = 'stale';
+    const tdL = document.createElement('td'); tdL.textContent = row.label;
+    const tdV = document.createElement('td'); tdV.textContent = row.value;
+    tr.appendChild(tdL); tr.appendChild(tdV);
+    tbody.appendChild(tr);
+  });
+  tbl.appendChild(tbody);
+  return tbl;
+}
+
+function groupFilter(arr, group) {
+  return arr.filter(item => item.displayAttributes && item.displayAttributes.group === group);
+}
+
+function renderGroupInto(elId, polars, deltas, attitudes) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.innerHTML = '';
+  const rows = [
+    ...polars   .map(p => ({ label: itemLabel(p), value: formatPolarValue(p),    stale: isStale(p) })),
+    ...deltas   .map(d => ({ label: itemLabel(d), value: formatDeltaValue(d),    stale: isStale(d) })),
+    ...attitudes.map(a => ({ label: itemLabel(a), value: formatAttitudeValue(a), stale: isStale(a) }))
+  ];
+  if (rows.length) el.appendChild(buildDataTable(rows));
+}
+
+function renderLiveSections() {
+  // Inputs section — raw sensors
+  renderGroupInto('inputs-values',
+    groupFilter(state.polarsAll,    'input'),
+    groupFilter(state.deltasAll,    'input'),
+    groupFilter(state.attitudesAll, 'input')
+  );
+
+  // Estimation — inputs: all raw (polars + heading delta + attitude)
+  renderGroupInto('estimation-inputs',
+    groupFilter(state.polarsAll,    'input'),
+    groupFilter(state.deltasAll,    'input'),
+    groupFilter(state.attitudesAll, 'input')
+  );
+  // Estimation — intermediates: speed correction, boatSpeedRefGround
+  renderGroupInto('estimation-intermediates',
+    groupFilter(state.polarsAll, 'estimation-intermediate'),
+    [], []
+  );
+  // Estimation — outputs: corrected boat speed, smoothed current
+  renderGroupInto('estimation-outputs',
+    groupFilter(state.polarsAll, 'estimation-out'),
+    [], []
+  );
+
+  // Learning — inputs: smoothed polars/deltas/attitudes; smoothedCurrent only when assumeCurrent=true
+  const learningCurrentPolars = (config && config.assumeCurrent)
+    ? state.polarsAll.filter(p => p.id === 'currentDamped')
+    : [];
+  renderGroupInto('learning-inputs',
+    [...groupFilter(state.polarsAll, 'learning-in'), ...learningCurrentPolars],
+    groupFilter(state.deltasAll,    'learning-in'),
+    groupFilter(state.attitudesAll, 'learning-in')
+  );
+  // Learning — intermediates (placeholder for future)
+  renderGroupInto('learning-intermediates',
+    groupFilter(state.polarsAll, 'learning-intermediate'),
+    [], []
+  );
+  // Correction table
+  const tableEl = document.getElementById('table-container');
+  if (tableEl) {
+    tableEl.innerHTML = '';
+    Object.values(state.tablesById).forEach(t => tableEl.appendChild(tableRenderer.render(t)));
+  }
+}
+
+// ─── Polling ──────────────────────────────────────────────────────────────────
+let updateTimer = null;
+
+async function tick() {
+  const data = await apiGet('/getResults');
   if (data) {
-    //console.log(data);
-    //updateOptions(data);
-    updatePolar(data);
-    updateAttitude(data);
-    updateDelta(data);
-    updateTable(data);
+    normaliseState(data);
+    renderLiveSections();
   }
 }
 
 function startUpdates() {
   if (updateTimer) clearInterval(updateTimer);
-  updateTimer = setInterval(fetchAndUpdateData, updateInterval);
+  updateTimer = setInterval(tick, 1000);
 }
 
-export function toggleUpdates() {
-  updatesPaused = !updatesPaused;
-  const toggleButton = document.getElementById('toggle-updates');
 
-  if (updatesPaused) {
-    clearInterval(updateTimer);
-    toggleButton.textContent = "Resume";
-  } else {
-    toggleButton.textContent = "Pause";
-    startUpdates();
+
+// ─── Vanilla modal helpers ────────────────────────────────────────────────────
+
+function showModal(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.style.display = 'block';
+  el.classList.add('show');
+  el.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('modal-open');
+  if (!document.getElementById('app-modal-backdrop')) {
+    const bd = document.createElement('div');
+    bd.id = 'app-modal-backdrop';
+    bd.className = 'modal-backdrop show';
+    document.body.appendChild(bd);
   }
 }
 
+function closeModal(id) {
+  const el = document.getElementById(id);
+  if (el) { el.style.display = 'none'; el.classList.remove('show'); el.setAttribute('aria-hidden', 'true'); }
+  document.body.classList.remove('modal-open');
+  const bd = document.getElementById('app-modal-backdrop');
+  if (bd) bd.remove();
+}
 
+// ─── Correction table manager ─────────────────────────────────────────────────
 
+function setTableName(name) {
+  const el = document.getElementById('active-table-name');
+  if (el) el.textContent = name ? `(${name})` : '';
+}
 
+function modalStatus(modalId, msg, ok = false) {
+  const el = document.getElementById('modal-' + modalId + '-status');
+  if (el) { el.textContent = msg; el.className = 'small mr-auto ' + (ok ? 'text-success' : 'text-danger'); }
+}
 
-//document.getElementById('toggle-updates').addEventListener('click', toggleUpdates);
+function initTableManager() {
+  if (config && config.tableName) setTableName(config.tableName);
 
-const tableRenderer = new TableRenderer();
-tableRenderer.setColumnHeaderFormat(cAngle);
-tableRenderer.setRowHeaderFormat(cSpeed);
-// Default cell format is unified and driven by metrics; set to polar-like by default
-tableRenderer.setCellFormat(unifiedCellRenderer);
+  // Wire close/cancel buttons and click-outside for each modal
+  ['modal-create', 'modal-load', 'modal-copy', 'modal-resize'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.querySelectorAll('.close, [data-dismiss="modal"]').forEach(btn => {
+      btn.addEventListener('click', () => closeModal(id));
+    });
+    el.addEventListener('click', e => { if (e.target === el) closeModal(id); });
+  });
 
-function initSettingsFromStorage() {
-  try {
-    const speedUnit = localStorage.getItem(LS_KEYS.speed) || 'knots';
-    const angleUnit = localStorage.getItem(LS_KEYS.angle) || 'degrees';
-    const colorMode = localStorage.getItem(LS_KEYS.color) || 'none';
-    const metricsRaw = localStorage.getItem(LS_KEYS.metrics);
+  // ── New ──
+  document.getElementById('btn-tbl-new')?.addEventListener('click', () => {
+    modalStatus('create', '');
+    showModal('modal-create');
+  });
 
-    const speedEl = document.getElementById('speed-unit');
-    const angleEl = document.getElementById('angle-unit');
-    const colorEl = document.getElementById('color-mode');
-    const metricsEls = {
-      correction: document.getElementById('show-correction'),
-      factor: document.getElementById('show-factor'),
-      leeway: document.getElementById('show-leeway'),
-      trace: document.getElementById('show-trace'),
-      N: document.getElementById('show-N'),
-    };
-    if (speedEl) speedEl.value = speedUnit;
-    if (angleEl) angleEl.value = angleUnit;
-    if (colorEl) colorEl.value = colorMode;
-    if (metricsRaw) {
-      try {
-        const parsed = JSON.parse(metricsRaw);
-        selectedMetrics = { ...selectedMetrics, ...parsed };
-      } catch {}
+  // ── Load ──
+  document.getElementById('btn-tbl-load')?.addEventListener('click', async () => {
+    const listEl = document.getElementById('table-list');
+    const confirmBtn = document.getElementById('btn-load-confirm');
+    if (listEl) listEl.innerHTML = '<li class="list-group-item text-muted small">Loading…</li>';
+    if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.onclick = null; }
+    modalStatus('load', '');
+    showModal('modal-load');
+    let selectedName = null;
+    const tables = await apiGet('/api/tables');
+    if (!listEl) return;
+    listEl.innerHTML = '';
+    if (!tables || tables.length === 0) {
+      listEl.innerHTML = '<li class="list-group-item text-muted small">No saved tables found.</li>';
+      return;
     }
-    // Initialize checkboxes to match selectedMetrics
-    if (metricsEls.correction) metricsEls.correction.checked = !!selectedMetrics.correction;
-    if (metricsEls.factor) metricsEls.factor.checked = !!selectedMetrics.factor;
-    if (metricsEls.leeway) metricsEls.leeway.checked = !!selectedMetrics.leeway;
-    if (metricsEls.trace) metricsEls.trace.checked = !!selectedMetrics.trace;
-    if (metricsEls.N) metricsEls.N.checked = !!selectedMetrics.N;
+    tables.forEach(t => {
+      const li = document.createElement('li');
+      li.className = 'list-group-item list-group-item-action d-flex justify-content-between align-items-center'
+        + (t.active ? ' active' : '');
+      const span = document.createElement('span');
+      span.textContent = t.name;
+      li.appendChild(span);
+      if (t.active) {
+        const badge = document.createElement('span');
+        badge.className = 'badge badge-light';
+        badge.textContent = 'active';
+        li.appendChild(badge);
+      }
+      li.addEventListener('click', () => {
+        listEl.querySelectorAll('li').forEach(l => l.classList.remove('active'));
+        li.classList.add('active');
+        selectedName = t.name;
+        if (confirmBtn) confirmBtn.disabled = false;
+      });
+      listEl.appendChild(li);
+    });
+    if (confirmBtn) {
+      confirmBtn.onclick = async () => {
+        if (!selectedName) return;
+        modalStatus('load', '');
+        try {
+          const r = await apiPost('/api/tables/load', { name: selectedName });
+          setTableName(r.name);
+          if (config) config.tableName = r.name;
+          closeModal('modal-load');
+          await tick();
+        } catch (e) { modalStatus('load', e.message); }
+      };
+    }
+  });
 
-    // Apply handlers (order: units, then renderer-dependent)
-    handleSpeedUnitChange(speedUnit);
-    handleAngleUnitChange(angleUnit);
-    handleColorModeChange(colorMode);
-  } catch (e) {
-    // Fallback to defaults on any error
-    handleSpeedUnitChange('knots');
-    handleAngleUnitChange('degrees');
-    handleColorModeChange('none');
-  }
+  // ── Copy ──
+  document.getElementById('btn-tbl-copy')?.addEventListener('click', () => {
+    modalStatus('copy', '');
+    showModal('modal-copy');
+  });
+
+  // ── Resize ──
+  document.getElementById('btn-tbl-resize')?.addEventListener('click', () => {
+    modalStatus('resize', '');
+    const t = Object.values(state.tablesById)[0];
+    if (t && t.row && t.col) {
+      const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = +v.toFixed(3); };
+      set('resize-maxSpeed',  t.row.max  * 1.943844);
+      set('resize-speedStep', t.row.step * 1.943844);
+      set('resize-maxHeel',   t.col.max  * (180 / Math.PI));
+      set('resize-heelStep',  t.col.step * (180 / Math.PI));
+    }
+    showModal('modal-resize');
+  });
+
+  // ── Create confirm ──
+  document.getElementById('btn-create-confirm')?.addEventListener('click', async () => {
+    modalStatus('create', '');
+    const body = {
+      name:      (document.getElementById('create-name')?.value || '').trim(),
+      maxSpeed:  Number(document.getElementById('create-maxSpeed')?.value),
+      speedStep: Number(document.getElementById('create-speedStep')?.value),
+      maxHeel:   Number(document.getElementById('create-maxHeel')?.value),
+      heelStep:  Number(document.getElementById('create-heelStep')?.value),
+    };
+    if (!body.name) { modalStatus('create', 'Name is required.'); return; }
+    try {
+      const r = await apiPost('/api/tables/create', body);
+      setTableName(r.name);
+      if (config) config.tableName = r.name;
+      closeModal('modal-create');
+      await tick();
+    } catch (e) { modalStatus('create', e.message); }
+  });
+
+  // ── Copy confirm ──
+  document.getElementById('btn-copy-confirm')?.addEventListener('click', async () => {
+    modalStatus('copy', '');
+    const newName = (document.getElementById('copy-name')?.value || '').trim();
+    if (!newName) { modalStatus('copy', 'New name is required.'); return; }
+    try {
+      const r = await apiPost('/api/tables/copy', { newName });
+      setTableName(r.name);
+      if (config) config.tableName = r.name;
+      closeModal('modal-copy');
+      await tick();
+    } catch (e) { modalStatus('copy', e.message); }
+  });
+
+  // ── Resize confirm ──
+  document.getElementById('btn-resize-confirm')?.addEventListener('click', async () => {
+    modalStatus('resize', '');
+    const body = {
+      maxSpeed:  Number(document.getElementById('resize-maxSpeed')?.value),
+      speedStep: Number(document.getElementById('resize-speedStep')?.value),
+      maxHeel:   Number(document.getElementById('resize-maxHeel')?.value),
+      heelStep:  Number(document.getElementById('resize-heelStep')?.value),
+    };
+    if (!Object.values(body).every(v => Number.isFinite(v) && v > 0)) {
+      modalStatus('resize', 'All dimensions must be positive numbers.');
+      return;
+    }
+    try {
+      await apiPost('/api/tables/resize', body);
+      closeModal('modal-resize');
+      await tick();
+    } catch (e) { modalStatus('resize', e.message); }
+  });
 }
 
-export function handleMetricsChange() {
-  const metricsEls = {
-    correction: document.getElementById('show-correction'),
-    factor: document.getElementById('show-factor'),
-    leeway: document.getElementById('show-leeway'),
-    trace: document.getElementById('show-trace'),
-    N: document.getElementById('show-N'),
-  };
-  selectedMetrics = {
-    correction: metricsEls.correction ? !!metricsEls.correction.checked : selectedMetrics.correction,
-    factor: metricsEls.factor ? !!metricsEls.factor.checked : selectedMetrics.factor,
-    leeway: metricsEls.leeway ? !!metricsEls.leeway.checked : selectedMetrics.leeway,
-    trace: metricsEls.trace ? !!metricsEls.trace.checked : selectedMetrics.trace,
-    N: metricsEls.N ? !!metricsEls.N.checked : selectedMetrics.N,
-  };
-  try {
-    localStorage.setItem(LS_KEYS.metrics, JSON.stringify(selectedMetrics));
-  } catch {}
-  // Re-render with current data (trigger fetch or reuse last render by forcing a refresh)
-  fetchAndUpdateData();
+// ─── Boot ─────────────────────────────────────────────────────────────────────
+async function start() {
+  initTableManager();
+
+  config = await apiGet('/api/settings');
+  if (config && config.tableName) setTableName(config.tableName);
+  renderSettingsPanel();
+
+  await tick();
+  // Re-render settings after first tick so source dropdowns are populated
+  renderSettingsPanel();
+  startUpdates();
 }
 
-
-// Attach functions to the window object to make them globally accessible
-window.handleSpeedUnitChange = handleSpeedUnitChange;
-window.handleAngleUnitChange = handleAngleUnitChange;
-window.handleColorModeChange = handleColorModeChange;
-window.handleMetricsChange = handleMetricsChange;
-window.toggleUpdates = toggleUpdates;
-
-
-// Initial fetch and start updates
-initSettingsFromStorage();
-startUpdates();
+window.addEventListener('DOMContentLoaded', () => {
+  start();
+});

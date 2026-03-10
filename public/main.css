@@ -1,84 +1,36 @@
-/* --- CSS Variables for Colors --- */
+/* ─── CSS Variables for instance colours (used by SVG strokes and table rows) ─ */
 :root {
-  /* Data type colors */
-  --polar-color: #0d47a1;           /* darker blue */
-  --delta-color: #1b5e20;           /* darker green */
-  --attitude-color: #b28704;        /* darker yellow/gold */
-  --table2d-color: #4e342e;         /* darker brown */
-
-  /* Instance colors */
-  --heading-color: #000000;         /* black */
-  --attitude-color-instance: #000000; /* black */
-  --current-color: #0d47a1;         /* darker blue */
-  --currentDamped-color: #0d47a1;   /* darker blue */
-  --boatSpeed-color: #388e3c;       /* darker green */
-  --boatSpeedDamped-color: #388e3c; /* darker green */
-  --correctedBoatSpeed-color: #27632a; /* even darker green */
-  --boatSpeedRefGround-color: #00575b; /* darker teal */
-  --groundSpeed-color: #5d4037;     /* darker brown */
-  --groundSpeedDamped-color: #5d4037; /* darker brown */
-  --speedCorrection-color: #ad1457; /* darker pink/red */
-  --residual-color: #6a1b9a;        /* darker purple */
-  --correctionTable-color: #4e342e; /* darker brown */
+  --heading-color: #000000;
+  --attitude-color-instance: #000000;
+  --current-color: #0d47a1;
+  --currentDamped-color: #0d47a1;
+  --boatSpeed-color: #388e3c;
+  --boatSpeedDamped-color: #388e3c;
+  --correctedBoatSpeed-color: #27632a;
+  --boatSpeedRefGround-color: #00575b;
+  --groundSpeed-color: #5d4037;
+  --groundSpeedDamped-color: #5d4037;
+  --speedCorrection-color: #ad1457;
+  --residual-color: #6a1b9a;
+  --correctionTable-color: #4e342e;
 }
 
-/* --- Data Type Classes --- */
+/* ─── Instance ID colours ──────────────────────────────────────────────────── */
+#heading          { color: var(--heading-color);          stroke: var(--heading-color); }
+#attitude         { color: var(--attitude-color-instance);stroke: var(--attitude-color-instance); }
+#current,
+#currentDamped    { color: var(--current-color);          stroke: var(--current-color); }
+#boatSpeed,
+#boatSpeedDamped  { color: var(--boatSpeed-color);        stroke: var(--boatSpeed-color); }
+#correctedBoatSpeed { color: var(--correctedBoatSpeed-color); stroke: var(--correctedBoatSpeed-color); }
+#boatSpeedRefGround { color: var(--boatSpeedRefGround-color); stroke: var(--boatSpeedRefGround-color); }
+#groundSpeed,
+#groundSpeedDamped { color: var(--groundSpeed-color);    stroke: var(--groundSpeed-color); }
+#speedCorrection  { color: var(--speedCorrection-color);  stroke: var(--speedCorrection-color); }
+#residual         { color: var(--residual-color);          stroke: var(--residual-color); }
+#correctionTable  { color: var(--correctionTable-color);  stroke: var(--correctionTable-color); }
 
-.data {
-  color: black;
-}
-
-
-/* --- Instance IDs for Specific Colors --- */
-#heading {
-  color: var(--heading-color);
-  stroke: var(--heading-color);
-}
-#attitude {
-  color: var(--attitude-color-instance);
-  stroke: var(--attitude-color-instance);
-}
-#current, #currentDamped {
-  color: var(--current-color);
-  stroke: var(--current-color);
-}
-#boatSpeed, #boatSpeedDamped {
-  color: var(--boatSpeed-color);
-  stroke: var(--boatSpeed-color);
-}
-#correctedBoatSpeed {
-  color: var(--correctedBoatSpeed-color);
-  stroke: var(--correctedBoatSpeed-color);
-}
-#boatSpeedRefGround {
-  color: var(--boatSpeedRefGround-color);
-  stroke: var(--boatSpeedRefGround-color);
-}
-#groundSpeed, #groundSpeedDamped {
-  color: var(--groundSpeed-color);
-  stroke: var(--groundSpeed-color);
-}
-#speedCorrection {
-  color: var(--speedCorrection-color);
-  stroke: var(--speedCorrection-color);
-}
-#residual {
-  color: var(--residual-color);
-  stroke: var(--residual-color);
-}
-#correctionTable {
-  color: var(--correctionTable-color);
-  stroke: var(--correctionTable-color);
-}
-
-/* --- Table and Cell Styling --- */
-table {
-  border-collapse: collapse;
-}
-th, td {
-  border: 1px solid black;
-  padding: 5px;
-}
+/* ─── Correction table cell sizing ────────────────────────────────────────── */
 .TableCell {
   width: 60px;
   height: 60px;
@@ -86,92 +38,59 @@ th, td {
   vertical-align: middle;
   font-size: 11px;
 }
-.selectedCell {
-  color: rgb(17, 204, 0);
+/* cell states */
+.cell--empty     { background-color: #f0f0f0; }
+.cell--active    { outline: 3px solid #1565c0; outline-offset: -3px; }
+.cell--neighbour { outline: 1px dashed #90a4ae; outline-offset: -2px; }
+.cell-factor     { font-weight: 600; font-size: 12px; }
+.cell-leeway     { font-size: 11px; color: #555; margin-top: 2px; }
+
+/* ─── Stable table column widths inside cards ──────────────────────────────── */
+.card-body .table {
+  table-layout: fixed;
+  width: 100%;
 }
-.emptyCell {
+.card-body .table td:first-child {
+  width: 55%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.card-body .table td:first-child small {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  display: block;
+}
+.card-body .table td:last-child { width: 45%; }
+
+/* ─── SVG stroke rules ─────────────────────────────────────────────────────── */
+line { stroke-width: 2; }
+#hull, #mast { stroke: purple; stroke-width: 1; stroke-linecap: round; }
+
+/* ─── Surface plot ─────────────────────────────────────────────────────────── */
+.surfacePlot { width: 100%; height: 100%; border: 1px solid black; padding: 0; margin: 0; position: relative; }
+
+/* ─── SignalK navbar-brand suppression ─────────────────────────────────────── */
+.app-header .navbar-brand {
+  background-image: none !important;
+  width: auto !important;
+}
+.app-header .navbar-brand::before,
+.app-header .navbar-brand::after {
+  display: none !important;
+  content: none !important;
 }
 
-/* --- SVG Styling --- */
-svg {
-  border: 1px solid #ccc;
-  height: auto;
-  aspect-ratio: 1 / 1;
-  svg {
-  width: 100vmin;
-  height: 100vmin;
-    }
-}
-line {
-  stroke-width: 2;
-}
-#hull, #mast {
-  stroke: purple;
-  stroke-width: 1;
-  stroke-linecap: round;
+/* ─── App title ────────────────────────────────────────────────────────────── */
+.app-title {
+  font-size: 1.1rem;
+  font-weight: 500;
+  color: #29363D;
 }
 
-/* --- Menu and Layout --- */
-body {
-  font-family: Arial, sans-serif;
-  display: flex;
-  flex-direction: column;
-  margin: 15px 15px 15px 15px;
-}
-.menu-bar {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  background: #6a6a6a;
-  color: black;
-  display: flex;
-  align-items: center;
-  padding: 10px 20px;
-  gap: 20px;
-  box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.2);
-  z-index: 1000;
-}
-.menu-item {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  cursor: pointer;
-}
-.menu-item label {
-  font-size: 14px;
-  color: black;
-}
-.menu-item select {
-  background: transparent;
-  border: 1px solid #888;
-  color: black;
-  font-size: 14px;
-  appearance: none;
-  padding-right: 15px;
-  cursor: pointer;
-}
-.menu-item select::-ms-expand {
-  display: none;
-}
-#toggle-updates {
-  background: transparent;
-  border: 1px solid #888;
-  padding: 5px 15px;
-  border-radius: 4px;
-  cursor: pointer;
-}
-#toggle-updates:hover {
-  background: #555;
-}
-.content {
-  margin-top: 60px;
-}
-.surfacePlot {
-  width: 100%;
-  height: 100%;
-  border: 1px solid black;
-  padding: 0;
-  margin: 0;
-  position: relative;
-}
+/* ─── Sidebar accent ───────────────────────────────────────────────────────── */
+.sidebar .nav-link.active { border-left-color: #00bcd4 !important; }
+
+/* ─── Stale data rows ──────────────────────────────────────────────────────── */
+tr.stale td { color: #aaa; font-style: italic; }
