@@ -98,124 +98,27 @@ module.exports = function (app) {
   plugin.schema = {
     type: "object",
     description: "Speed and Current is configured through its own webapp. Open it from the Signal K app list.",
-    properties: {
-      sogFallback: {
-        type: "boolean",
-        title: "SOG fallback",
-        description: "Allow fallback to SOG when paddlewheel is blocked.",
-        default: true
-      },
-      estimateBoatSpeed: {
-        type: "boolean",
-        title: "Estimate Boat Speed",
-        description: "Enable estimation of boat speed.",
-        default: false
-      },
-      updateCorrectionTable: {
-        type: "boolean",
-        title: "Update Correction Table",
-        description: "Enable updating of the correction table.",
-        default: true
-      },
-      stability: {
-        type: "number",
-        title: "Correction Table Stability",
-        description: "Stability of the corrections (higher means that corrections are changed at a slower rate).",
-        default: 7,
-        minimum: 1,
-        maximum: 20
-      },
-      assumeCurrent: {
-        type: "boolean",
-        title: "Assume Current",
-        description: "Assume there is a current present when updating the correction table.",
-        default: false
-      },
-      headingSource: {
-        type: "string",
-        title: "Heading Source",
-        description: "Source to use for navigation.heading (optional).",
-        default: " "
-      },
-      boatSpeedSource: {
-        type: "string",
-        title: "Boat Speed Source",
-        description: "Source to use for navigation.speedThroughWater (optional).",
-        default: " "
-      },
-      COGSource: {
-        type: "string",
-        title: "Course over ground",
-        description: "Source to use for navigation.courseOverGroundTrue (optional)",
-        default: " "
-      },
-      SOGSource: {
-        type: "string",
-        title: "Ground Speed Source",
-        description: "Source to use for navigation.speedOverGround (optional)",
-        default: " "
-      },
-      attitudeSource: {
-        type: "string",
-        title: "Attitude Source",
-        description: "Source to use for navigation.attitude (optional)",
-        default: " "
-      },
-      preventDuplication: {
-        type: "boolean",
-        title: "Prevent duplication of boat speed",
-        description: "Overwrite boat speed from sensor with corrected boat speed.",
-        default: true
-      }
-    }
+    properties: {}
   };
 
-  plugin.uiSchema = {
-    'ui:order': [
-      "sogFallback",
-      "estimateBoatSpeed",
-      "updateCorrectionTable",
-      "assumeCurrent",
-      "stability",
-      "headingSource",
-      "boatSpeedSource",
-      "COGSource",
-      "SOGSource",
-      "attitudeSource",
-      "preventDuplication"
-    ],
-    sogFallback: {
-      "ui:widget": "checkbox"
-    },
-    estimateBoatSpeed: {
-      "ui:widget": "checkbox"
-    },
-    updateCorrectionTable: {
-      "ui:widget": "checkbox"
-    },
-    stability: {
-      "ui:widget": "updown"
-    },
-    assumeCurrent: {
-      "ui:widget": "checkbox"
-    },
-    mode: {
-      "ui:widget": "select"
-    },
-    preventDuplication: {
-      "ui:widget": "checkbox"
-    }
-  };
 
   plugin.registerWithRouter = function (router) {
     app.debug('registerWithRouter');
     readOptions(); // pre-load so /api/settings works before start()
 
-    router.get('/getResults', (req, res) => {
+    router.get('/api/report', (req, res) => {
       if (!isRunning) {
         res.status(503).json({ error: "Plugin is not running" });
       } else {
         res.json(reportFull.report());
+      }
+    });
+
+    router.get('/api/meta', (req, res) => {
+      if (!isRunning) {
+        res.status(503).json({ error: "Plugin is not running" });
+      } else {
+        res.json(reportFull.meta());
       }
     });
 
@@ -284,7 +187,7 @@ module.exports = function (app) {
       const row = { min: 0, max: SI.fromKnots(body.maxSpeed), step: SI.fromKnots(body.speedStep) };
       const col = { min: -SI.fromDegrees(body.maxHeel), max: SI.fromDegrees(body.maxHeel), step: SI.fromDegrees(body.heelStep) };
       const newTable = new CorrectionTable(name, row, col, options.stability || 7);
-      newTable.setDisplayAttributes({ label: name });
+      newTable.setDisplayAttributes({ label: name }); // Table2D API unchanged
       saveTable(newTable, path.join(app.getDataDirPath(), name + '.json'));
       if (isRunning) swapTable(newTable);
       saveTableName(name);
@@ -301,7 +204,7 @@ module.exports = function (app) {
       const fileData = Table2D.readFromFile(filePath);
       if (!fileData) return res.status(404).json({ error: `Table '${name}' not found` });
       const loadedTable = CorrectionTable.fromJSON(fileData, options.stability || 7);
-      loadedTable.setDisplayAttributes({ label: name });
+      loadedTable.setDisplayAttributes({ label: name }); // Table2D API unchanged
       if (isRunning) swapTable(loadedTable);
       saveTableName(name);
       res.json({ name });
@@ -317,7 +220,7 @@ module.exports = function (app) {
       const data = table.toJSON();
       data.id = newName;
       const copiedTable = CorrectionTable.fromJSON(data, options.stability || 7);
-      copiedTable.setDisplayAttributes({ label: newName });
+      copiedTable.setDisplayAttributes({ label: newName }); // Table2D API unchanged
       saveTable(copiedTable, path.join(app.getDataDirPath(), newName + '.json'));
       swapTable(copiedTable);
       saveTableName(newName);
@@ -336,7 +239,7 @@ module.exports = function (app) {
       const newRow = { min: 0, max: SI.fromKnots(body.maxSpeed), step: SI.fromKnots(body.speedStep) };
       const newCol = { min: -SI.fromDegrees(body.maxHeel), max: SI.fromDegrees(body.maxHeel), step: SI.fromDegrees(body.heelStep) };
       const resized = CorrectionTable.resampleFromJSON(table.toJSON(), newRow, newCol, options.stability || 7, 1e-4);
-      resized.setDisplayAttributes({ label: resized.id });
+      resized.setDisplayAttributes({ label: resized.id }); // Table2D API unchanged
       saveTable(resized, path.join(app.getDataDirPath(), resized.id + '.json'));
       swapTable(resized);
       res.json({ name: resized.id });
@@ -371,11 +274,10 @@ module.exports = function (app) {
     rawCurrent = new Polar(app, plugin.id, "current");
     rawCurrent.configureMagnitude("self.environment.current.drift");
     rawCurrent.configureAngle("self.environment.current.setTrue");
-    rawCurrent.setDisplayAttributes({ label: "current", plane: "Ground" });
+    rawCurrent.setMeta({ displayName: "Current", plane: "Ground" });
     rawCurrent.setAngleRange('0to2pi');
-    smoothedCurrent = new PolarSmoother("currentDamped", rawCurrent, KalmanSmoother, { processVariance: 0.000001, measurementVariance: 0.01 });
+    smoothedCurrent = new PolarSmoother(rawCurrent, KalmanSmoother, { processVariance: 0.000001, measurementVariance: 0.01 }); // id auto-derived: 'current.smoothed'
     smoothedCurrent.setAngleRange('0to2pi');
-    smoothedCurrent.setDisplayAttributes({ label: "Current", plane: "Ground" });
     // Current should be initialised as no current
     rawCurrent.setVectorValue({ x: 0, y: 0 });
     // Strongly assume no current at start
@@ -383,7 +285,7 @@ module.exports = function (app) {
     smoothedCurrent.ySmoother.reset(0, 0.00000001);
     // no current
     noCurrent = createSmoothedPolar({
-      id: "boatSpeed",
+      id: "noCurrent",
       pathMagnitude: "self.environment.current.drift",
       pathAngle: "self.environment.current.setTrue",
       subscribe: false,
@@ -391,7 +293,7 @@ module.exports = function (app) {
       pluginId: plugin.id,
       SmootherClass: BaseSmoother,
       smootherOptions: smootherOptions,
-      displayAttributes: { label: "NoCurrent", plane: "Ground" },
+      meta: { displayName: "NoCurrent", plane: "Ground" },
     });
     noCurrent.xSmoother.reset(0,0);
     noCurrent.ySmoother.reset(0,0);
@@ -404,9 +306,9 @@ module.exports = function (app) {
     correctedBoatSpeed = new Polar(app, plugin.id, "correctedBoatSpeed");
     correctedBoatSpeed.configureMagnitude("navigation.speedThroughWater");
     correctedBoatSpeed.configureAngle("navigation.leewayAngle");
-    correctedBoatSpeed.setDisplayAttributes({ label: "Corrected boatspeed / Leeway", plane: "Boat", group: 'estimation-out' });
+    correctedBoatSpeed.setMeta({ displayName: "Corrected boatspeed / Leeway", plane: "Boat" });
     boatSpeedRefGround = new Polar(app, plugin.id, "boatSpeedRefGround");
-    boatSpeedRefGround.setDisplayAttributes({ label: "Boat speed over ground", plane: "Ground", group: 'estimation-intermediate' });
+    boatSpeedRefGround.setMeta({ displayName: "Boat speed over ground", plane: "Ground" });
 
     // ground speed
     smoothedGroundSpeed = new SmoothedGroundSpeed(app, plugin.id, options.SOGSource, true, MovingAverageSmoother, smootherOptions);
@@ -414,22 +316,14 @@ module.exports = function (app) {
 
     // correction vector
     speedCorrection = new Polar(app, plugin.id, "speedCorrection");
-    speedCorrection.setDisplayAttributes({ label: "speed correction", plane: "Boat", group: 'estimation-intermediate' });
+    speedCorrection.setMeta({ displayName: "Speed correction", plane: "Boat" });
 
     // residual
     residual = new Polar(app, plugin.id, "residual");
-    residual.setDisplayAttributes({ label: "residual", plane: "Ground", group: 'learning-intermediate' });
+    residual.setMeta({ displayName: "Residual", plane: "Ground" });
 
-    // group tags for UI section routing
-    rawHeading.setDisplayAttribute('group', 'input');
-    rawAttitude.setDisplayAttribute('group', 'input');
-    rawBoatSpeed.setDisplayAttribute('group', 'input');
-    rawGroundSpeed.setDisplayAttributes({ label: 'Groundspeed', group: 'input' });
-    smoothedBoatSpeed.setDisplayAttribute('group', 'learning-in');
-    smoothedGroundSpeed.setDisplayAttributes({ label: 'Groundspeed (smoothed)', group: 'learning-in' });
-    smoothedHeading.setDisplayAttribute('group', 'learning-in');
-    smoothedAttitude.setDisplayAttribute('group', 'learning-in');
-    smoothedCurrent.setDisplayAttributes({ label: "Current", plane: "Ground", group: 'estimation-out' });
+    // meta for shared polar objects (raw = smoother.polar; displayName set once, ID distinguishes raw vs smoothed)
+    rawGroundSpeed.setMeta({ displayName: "Groundspeed" });
 
     //#endregion
 
@@ -668,7 +562,7 @@ module.exports = function (app) {
       table = new CorrectionTable(name, row, col, stability);
       app.debug("Correction table created: " + name);
     }
-    table.setDisplayAttributes({ label: table.id });
+    table.setDisplayAttributes({ label: table.id }); // Table2D API unchanged
     return table;
   }
 

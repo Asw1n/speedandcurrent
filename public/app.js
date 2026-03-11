@@ -22,26 +22,42 @@ let state = {
 };
 
 function normaliseState(data) {
-  const polarsAll    = (data.polars    || []).filter(p => p && p.id);
-  const deltasAll    = (data.deltas    || []).filter(d => d && d.id);
-  const attitudesAll = (data.attitudes || []).filter(a => a && a.id);
-  const tablesById   = {};
-  (data.tables || []).forEach(t => { if (t && t.id) tablesById[t.id] = t; });
-  // indexed versions (last-write-wins when IDs collide)
+  // reporter.report() returns { polars: {[id]:item}, deltas: {[id]:item},
+  //                             tables: {[id]:item}, attitudes: {[id]:item} }
   const polarsById    = {};
   const deltasById    = {};
   const attitudesById = {};
-  polarsAll   .forEach(p => { polarsById[p.id]    = p; });
-  deltasAll   .forEach(d => { deltasById[d.id]    = d; });
-  attitudesAll.forEach(a => { attitudesById[a.id] = a; });
+  const tablesById    = {};
+  for (const [id, v] of Object.entries(data.polars    || {})) polarsById[id]    = { ...v, id };
+  for (const [id, v] of Object.entries(data.deltas    || {})) deltasById[id]    = { ...v, id };
+  for (const [id, v] of Object.entries(data.attitudes || {})) attitudesById[id] = { ...v, id };
+  for (const [id, v] of Object.entries(data.tables    || {})) tablesById[id]    = { ...v, id };
+  const polarsAll    = Object.values(polarsById);
+  const deltasAll    = Object.values(deltasById);
+  const attitudesAll = Object.values(attitudesById);
   state = { polarsAll, deltasAll, attitudesAll, polarsById, deltasById, attitudesById, tablesById };
+}
+
+// ─── Static meta (fetched once at startup from /api/meta) ─────────────────────
+let metaById = {}; // keyed by item id
+
+async function loadMeta() {
+  const data = await apiGet('/api/meta');
+  if (!data) return;
+  // reporter.meta() returns { polars: {[id]:meta}, deltas: {[id]:meta}, ... }
+  // Flatten into a single metaById lookup.
+  metaById = {};
+  for (const category of ['polars', 'deltas', 'attitudes', 'tables']) {
+    const bucket = data[category] || {};
+    for (const [id, m] of Object.entries(bucket)) {
+      metaById[id] = { ...m, id };
+    }
+  }
 }
 
 function isStale(item) {
   if (!item) return true;
-  if (item.stale === true) return true;
-  if (item.displayAttributes && item.displayAttributes.stale === true) return true;
-  return false;
+  return item.state?.stale === true;
 }
 
 // ─── Config (live settings mirror) ───────────────────────────────────────────
@@ -105,8 +121,9 @@ function showMessage(html, isLink = false) {
 
 // ─── Settings: paramMeta ──────────────────────────────────────────────────────
 // Each entry: { label, type, min?, max?, step?, default?, sourceOf? }
-// sourceOf: { type:'polar'|'delta'|'attitude', id, field? }
-//   field defaults to 'magnitudeSources' for polars, 'sources' for delta/attitude.
+// sourceOf: { type:'polar'|'delta'|'attitude', id }
+//   For polars: sources come from item.state.magnitude.sources
+//   For deltas/attitudes: sources come from item.state.sources
 const paramMeta = {
   estimateBoatSpeed:     { label: 'Estimate boat speed',                  type: 'boolean' },
   updateCorrectionTable: { label: 'Update correction table',              type: 'boolean' },
@@ -114,10 +131,10 @@ const paramMeta = {
   sogFallback:           { label: 'Groundspeed fallback',                 type: 'boolean', description: 'Output Groundspeed as Boatspeed when the paddlewheel sensor is malfunctioning or stalled.' },
   preventDuplication:    { label: 'Prevent speed duplication',            type: 'boolean', description: 'Replace the raw sensor boatspeed on the Signal K bus with the corrected value, preventing duplicate conflicting values.' },
   stability:             { label: 'Stability (1–20)',                     type: 'number', min: 1, max: 20, step: 1, default: 7, description: 'How quickly the correction table adapts to new observations. Higher values mean slower, more stable changes.' },
-  headingSource:  { label: 'Heading source',          type: 'source', sourceOf: { type: 'delta',   id: 'headingAngle', field: 'sources' } },
-  boatSpeedSource:{ label: 'Boat speed source',       type: 'source', sourceOf: { type: 'polar',   id: 'boatSpeed',   field: 'magnitudeSources' } },
-  SOGSource:      { label: 'Groundspeed source',      type: 'source', sourceOf: { type: 'polar',   id: 'groundSpeed', field: 'magnitudeSources' } },
-  attitudeSource: { label: 'Attitude source',         type: 'source', sourceOf: { type: 'attitude',id: 'attitude',    field: 'sources' } },
+  headingSource:  { label: 'Heading source',          type: 'source', sourceOf: { type: 'delta',   id: 'heading.smoothed'     } },
+  boatSpeedSource:{ label: 'Boat speed source',       type: 'source', sourceOf: { type: 'polar',   id: 'boatSpeed.smoothed'   } },
+  SOGSource:      { label: 'Groundspeed source',      type: 'source', sourceOf: { type: 'polar',   id: 'groundSpeed.smoothed' } },
+  attitudeSource: { label: 'Attitude source',         type: 'source', sourceOf: { type: 'attitude',id: 'attitude.smoothed'    } },
 };
 
 // Settings groups for each UI section
@@ -138,8 +155,13 @@ function getStateItem(sourceOf) {
 function getSources(sourceOf) {
   const item = getStateItem(sourceOf);
   if (!item) return [];
-  const field = sourceOf.field || 'sources';
-  return Array.isArray(item[field]) ? item[field] : [];
+  if (sourceOf.type === 'polar') {
+    return Array.isArray(item.state?.magnitude?.sources) ? item.state.magnitude.sources : [];
+  }
+  // SmoothedHeading is a PolarSmoother reported as a delta; its sources are under state.angle
+  return Array.isArray(item.state?.sources) ? item.state.sources
+       : Array.isArray(item.state?.angle?.sources) ? item.state.angle.sources
+       : [];
 }
 
 // Build one settings control for a key.
@@ -274,8 +296,8 @@ function formatPolarValue(p) {
 
 function formatDeltaValue(d) {
   if (!d || typeof d.value !== 'number') return '—';
-  const unit = d.displayAttributes && d.displayAttributes.unit;
-  return unit === 'm/s' ? `${cSpeed(d.value)} kn` : `${cAngle(d.value)}°`;
+  const units = metaById[d.id]?.units;
+  return units === 'm/s' ? `${cSpeed(d.value)} kn` : `${cAngle(d.value)}°`;
 }
 
 function formatAttitudeValue(a) {
@@ -286,7 +308,7 @@ function formatAttitudeValue(a) {
 }
 
 function itemLabel(item) {
-  return (item.displayAttributes && item.displayAttributes.label) || item.id;
+  return metaById[item.id]?.displayName ?? item.path ?? item.id;
 }
 
 function buildDataTable(rows) {
@@ -305,8 +327,17 @@ function buildDataTable(rows) {
   return tbl;
 }
 
-function groupFilter(arr, group) {
-  return arr.filter(item => item.displayAttributes && item.displayAttributes.group === group);
+// ─── Section rendering ───────────────────────────────────────────────────────
+// Items are routed by explicit ID lists per section.
+// Raw handlers have plain IDs ('boatSpeed', 'groundSpeed', 'attitude') — present when
+// estimateBoatSpeed is enabled. Smoothed wrappers have '<id>.smoothed' IDs — present when
+// updateCorrectionTable is enabled.
+
+function filterById(arr, ids) {
+  return ids.flatMap(id => {
+    const item = arr.find(item => item.id === id);
+    return item ? [item] : [];
+  });
 }
 
 function renderGroupInto(elId, polars, deltas, attitudes) {
@@ -322,42 +353,42 @@ function renderGroupInto(elId, polars, deltas, attitudes) {
 }
 
 function renderLiveSections() {
-  // Inputs section — raw sensors
+  // Inputs section — raw sensor readings only (smoothing is internal to the plugin)
   renderGroupInto('inputs-values',
-    groupFilter(state.polarsAll,    'input'),
-    groupFilter(state.deltasAll,    'input'),
-    groupFilter(state.attitudesAll, 'input')
+    filterById(state.polarsAll,    ['boatSpeed', 'groundSpeed']),
+    filterById(state.deltasAll,    ['heading.angle']),
+    filterById(state.attitudesAll, ['attitude'])
   );
 
-  // Estimation — inputs: all raw (polars + heading delta + attitude)
+  // Estimation — inputs (raw sensor data used for boat speed estimation)
   renderGroupInto('estimation-inputs',
-    groupFilter(state.polarsAll,    'input'),
-    groupFilter(state.deltasAll,    'input'),
-    groupFilter(state.attitudesAll, 'input')
+    filterById(state.polarsAll,    ['boatSpeed', 'groundSpeed']),
+    filterById(state.deltasAll,    ['heading.angle']),
+    filterById(state.attitudesAll, ['attitude'])
   );
-  // Estimation — intermediates: speed correction, boatSpeedRefGround
+  // Estimation — intermediates
   renderGroupInto('estimation-intermediates',
-    groupFilter(state.polarsAll, 'estimation-intermediate'),
+    filterById(state.polarsAll, ['boatSpeedRefGround', 'speedCorrection']),
     [], []
   );
-  // Estimation — outputs: corrected boat speed, smoothed current
+  // Estimation — outputs
   renderGroupInto('estimation-outputs',
-    groupFilter(state.polarsAll, 'estimation-out'),
+    filterById(state.polarsAll, ['correctedBoatSpeed', 'current.smoothed']),
     [], []
   );
 
-  // Learning — inputs: smoothed polars/deltas/attitudes; smoothedCurrent only when assumeCurrent=true
+  // Learning — inputs: smoothed sensors + current if assumeCurrent
   const learningCurrentPolars = (config && config.assumeCurrent)
-    ? state.polarsAll.filter(p => p.id === 'currentDamped')
+    ? filterById(state.polarsAll, ['current.smoothed'])
     : [];
   renderGroupInto('learning-inputs',
-    [...groupFilter(state.polarsAll, 'learning-in'), ...learningCurrentPolars],
-    groupFilter(state.deltasAll,    'learning-in'),
-    groupFilter(state.attitudesAll, 'learning-in')
+    [...filterById(state.polarsAll, ['boatSpeed.smoothed', 'groundSpeed.smoothed']), ...learningCurrentPolars],
+    filterById(state.deltasAll,    ['heading.smoothed']),
+    filterById(state.attitudesAll, ['attitude.smoothed'])
   );
-  // Learning — intermediates (placeholder for future)
+  // Learning — intermediates
   renderGroupInto('learning-intermediates',
-    groupFilter(state.polarsAll, 'learning-intermediate'),
+    filterById(state.polarsAll, ['residual']),
     [], []
   );
   // Correction table
@@ -372,7 +403,7 @@ function renderLiveSections() {
 let updateTimer = null;
 
 async function tick() {
-  const data = await apiGet('/getResults');
+  const data = await apiGet('/api/report');
   if (data) {
     normaliseState(data);
     renderLiveSections();
@@ -577,6 +608,7 @@ async function start() {
   if (config && config.tableName) setTableName(config.tableName);
   renderSettingsPanel();
 
+  await loadMeta();
   await tick();
   // Re-render settings after first tick so source dropdowns are populated
   renderSettingsPanel();
