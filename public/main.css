@@ -38,6 +38,8 @@
   vertical-align: middle;
   font-size: 11px;
 }
+/* corner cell: show axis units */
+.TableCorner { font-size: 10px; color: #888; font-weight: 400; text-align: center; }
 /* cell states */
 .cell--empty     { background-color: #f0f0f0; }
 .cell--active    { outline: 3px solid #1565c0; outline-offset: -3px; }

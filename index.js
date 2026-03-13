@@ -2,16 +2,14 @@ const path = require('path');
 const fs = require('fs');
 
 const {
-  SmoothedHeading,
-  SmoothedAttitude,
-  SmoothedSpeedThroughWater,
-  SmoothedGroundSpeed,
+  SmoothedAngle,
   SI,
   MessageHandler,
   Polar,
   Reporter,
   BaseSmoother,
   MovingAverageSmoother,
+  ExponentialSmoother,
   KalmanSmoother,
   PolarSmoother,
   createSmoothedPolar,
@@ -39,7 +37,12 @@ module.exports = function (app) {
     SOGSource: ' ',
     attitudeSource: ' ',
     preventDuplication: true,
-    tableName: 'correctionTable'
+    tableName: 'correctionTable',
+    smootherClass: 'MovingAverageSmoother',
+    smootherTau: 3,
+    smootherTimeSpan: 5,
+    smootherSteadyState: 0.2,
+    showStatistics: false
   };
 
   function readOptions() {
@@ -61,12 +64,43 @@ module.exports = function (app) {
     saveOptions();
   }
 
+  /**
+   * Derives { SmootherClass, smootherOptions } from the current options.
+   * Enforces minimums so the smoother always has at least two observations for
+   * variance to be meaningful:
+   *   - MovingAverageSmoother: timeSpan >= 2 s  (≥ 2 samples at typical 1 Hz)
+   *   - ExponentialSmoother:   tau        >= 1 s
+   *   - KalmanSmoother:        steadyState in [0.01, 0.99]
+   */
+  function resolveSmootherConfig() {
+    const cls = options.smootherClass || 'MovingAverageSmoother';
+    if (cls === 'ExponentialSmoother') {
+      return {
+        SmootherClass: ExponentialSmoother,
+        smootherOptions: { timeConstant: Math.max(1, Number(options.smootherTau) || 3) }
+      };
+    }
+    if (cls === 'KalmanSmoother') {
+      const K = Math.min(0.99, Math.max(0.01, Number(options.smootherSteadyState) || 0.2));
+      return {
+        SmootherClass: KalmanSmoother,
+        smootherOptions: { steadyState: K }
+      };
+    }
+    // Default: MovingAverageSmoother
+    return {
+      SmootherClass: MovingAverageSmoother,
+      smootherOptions: { timeSpan: Math.max(2, Number(options.smootherTimeSpan) || 5) }
+    };
+  }
+
   function swapTable(newTable) {
     table = newTable;
     if (reportFull) reportFull.setTables([table]);
   }
 
   let isRunning = false;
+  let pluginStatus = 'Stopped';
   let smoothedHeading = null;
   let stability = null;
   let smoothedAttitude = null;
@@ -130,6 +164,10 @@ module.exports = function (app) {
       }
     });
 
+    router.get('/api/status', (req, res) => {
+      res.json({ status: pluginStatus, isRunning });
+    });
+
     // --- Settings API ---
     router.get('/api/settings', (req, res) => {
       res.json({ ...options, ...changedOptions });
@@ -184,8 +222,8 @@ module.exports = function (app) {
         if (!Number.isFinite(body[f]) || body[f] <= 0)
           return res.status(400).json({ error: `Invalid or missing field: ${f}` });
       }
-      const row = { min: 0, max: SI.fromKnots(body.maxSpeed), step: SI.fromKnots(body.speedStep) };
-      const col = { min: -SI.fromDegrees(body.maxHeel), max: SI.fromDegrees(body.maxHeel), step: SI.fromDegrees(body.heelStep) };
+      const row = { min: 0, max: body.maxSpeed, step: body.speedStep };
+      const col = { min: -body.maxHeel, max: body.maxHeel, step: body.heelStep };
       const newTable = new CorrectionTable(name, row, col, options.stability || 7);
       newTable.setDisplayAttributes({ label: name }); // Table2D API unchanged
       saveTable(newTable, path.join(app.getDataDirPath(), name + '.json'));
@@ -236,8 +274,8 @@ module.exports = function (app) {
         if (!Number.isFinite(body[f]) || body[f] <= 0)
           return res.status(400).json({ error: `Invalid or missing field: ${f}` });
       }
-      const newRow = { min: 0, max: SI.fromKnots(body.maxSpeed), step: SI.fromKnots(body.speedStep) };
-      const newCol = { min: -SI.fromDegrees(body.maxHeel), max: SI.fromDegrees(body.maxHeel), step: SI.fromDegrees(body.heelStep) };
+      const newRow = { min: 0, max: body.maxSpeed, step: body.speedStep };
+      const newCol = { min: -body.maxHeel, max: body.maxHeel, step: body.heelStep };
       const resized = CorrectionTable.resampleFromJSON(table.toJSON(), newRow, newCol, options.stability || 7, 1e-4);
       resized.setDisplayAttributes({ label: resized.id }); // Table2D API unchanged
       saveTable(resized, path.join(app.getDataDirPath(), resized.id + '.json'));
@@ -247,8 +285,13 @@ module.exports = function (app) {
 
   }
 
+  function setStatus(msg) {
+    pluginStatus = msg;
+    app.setPluginStatus(msg);
+  }
+
   plugin.start = (settings) => {
-    app.setPluginStatus("Starting");
+    setStatus('Starting');
     app.debug("Starting");
     readOptions(); // pick up any saves since registerWithRouter ran
     const tableName = options.tableName || 'correctionTable';
@@ -256,14 +299,30 @@ module.exports = function (app) {
     table = loadTable(options, tableFilePath);
 
     //#region Handler and Polar Initialization
-    let smootherOptions = { timeConstant: 1, processVariance: 1, measurementVariance: 20, timeSpan: 5 };
+    const { SmootherClass, smootherOptions } = resolveSmootherConfig();
 
     // heading
-    smoothedHeading = new SmoothedHeading(app, plugin.id, options.headingSource, true, MovingAverageSmoother, smootherOptions);
-    rawHeading = smoothedHeading.polar.angleHandler;
+    smoothedHeading = new SmoothedAngle(app, plugin.id, 'heading', 'navigation.headingTrue', {
+      source: options.headingSource,
+      passOn: true,
+      angleRange: '0to2pi',
+      meta: { displayName: 'Heading', plane: 'Ground' },
+      SmootherClass,
+      smootherOptions
+    });
+    rawHeading = smoothedHeading.handler;
 
     //attitude
-    smoothedAttitude = new SmoothedAttitude(app, plugin.id, options.attitudeSource, true, MovingAverageSmoother, smootherOptions);
+    smoothedAttitude = createSmoothedHandler({
+      app, pluginId: plugin.id,
+      id: 'attitude',
+      path: 'navigation.attitude',
+      source: options.attitudeSource,
+      passOn: true,
+      subscribe: true,
+      SmootherClass,
+      smootherOptions
+    });
     rawAttitude = smoothedAttitude.handler;
 
 
@@ -300,9 +359,16 @@ module.exports = function (app) {
     PolarSmoother.send(app, plugin.id, [noCurrent]);
 
 
-    // boat speed
-    smoothedBoatSpeed = new SmoothedSpeedThroughWater(app, plugin.id, options.boatSpeedSource, !options.preventDuplication, MovingAverageSmoother, smootherOptions);
-    rawBoatSpeed = smoothedBoatSpeed.polar;
+    // boat speed — STW magnitude is optionally forwarded; leeway angle passOn is always false
+    const rawBoatSpeedPolar = new Polar(app, plugin.id, 'boatSpeed');
+    rawBoatSpeedPolar.configureMagnitude('navigation.speedThroughWater', options.boatSpeedSource, !options.preventDuplication);
+    rawBoatSpeedPolar.configureAngle('navigation.leewayAngle', options.boatSpeedSource, false);
+    rawBoatSpeedPolar.setMeta({ displayName: 'Boat speed', plane: 'Boat' });
+    rawBoatSpeedPolar.setAngleRange('-piToPi');
+    rawBoatSpeedPolar.subscribe(true, false);
+    smoothedBoatSpeed = new PolarSmoother(rawBoatSpeedPolar, SmootherClass, smootherOptions);
+    rawBoatSpeedPolar.onChange = () => { smoothedBoatSpeed.sample(); };
+    rawBoatSpeed = rawBoatSpeedPolar;
     correctedBoatSpeed = new Polar(app, plugin.id, "correctedBoatSpeed");
     correctedBoatSpeed.configureMagnitude("navigation.speedThroughWater");
     correctedBoatSpeed.configureAngle("navigation.leewayAngle");
@@ -311,7 +377,18 @@ module.exports = function (app) {
     boatSpeedRefGround.setMeta({ displayName: "Boat speed over ground", plane: "Ground" });
 
     // ground speed
-    smoothedGroundSpeed = new SmoothedGroundSpeed(app, plugin.id, options.SOGSource, true, MovingAverageSmoother, smootherOptions);
+    smoothedGroundSpeed = createSmoothedPolar({
+      app, pluginId: plugin.id,
+      id: 'groundSpeed',
+      pathMagnitude: 'navigation.speedOverGround',
+      pathAngle: 'navigation.courseOverGroundTrue',
+      source: options.SOGSource,
+      passOn: true,
+      angleRange: '0to2pi',
+      meta: { displayName: 'Groundspeed', plane: 'Ground' },
+      SmootherClass,
+      smootherOptions
+    });
     rawGroundSpeed = smoothedGroundSpeed.polar;
 
     // correction vector
@@ -321,9 +398,6 @@ module.exports = function (app) {
     // residual
     residual = new Polar(app, plugin.id, "residual");
     residual.setMeta({ displayName: "Residual", plane: "Ground" });
-
-    // meta for shared polar objects (raw = smoother.polar; displayName set once, ID distinguishes raw vs smoothed)
-    rawGroundSpeed.setMeta({ displayName: "Groundspeed" });
 
     //#endregion
 
@@ -365,7 +439,7 @@ module.exports = function (app) {
 
     isRunning = true;
     started = new Date();
-    app.setPluginStatus("Running");
+    setStatus('Running');
     app.debug("Running");
 
     let lastSave = 0;
@@ -377,14 +451,14 @@ module.exports = function (app) {
       const minSpeed = SI.fromKnots(options.speedStep / 2);
 
       if (options.sogFallback && fallingBackToSog(minSpeed)) {
-        app.setPluginStatus("Falling back to Speed Over Ground");
+        setStatus('Falling back to Speed Over Ground');
         app.debug("Falling back");
         return;
       }
       if (!wellUnderway) {
-        app.setPluginStatus("Stabilizing");
+        setStatus('Stabilizing');
       } else {
-        app.setPluginStatus("Running");
+        setStatus('Running');
       }
       if (options.estimateBoatSpeed) correct(wellUnderway);
       if (options.updateCorrectionTable && wellUnderway) {
@@ -425,6 +499,7 @@ module.exports = function (app) {
         app.setPluginStatus("Stopped");
         app.debug("Stopped");
 
+        pluginStatus = 'Stopped';
         isRunning = false;
         resolve();
       } catch (error) {
@@ -587,14 +662,14 @@ module.exports = function (app) {
    * effect immediately since onChange reads from options.* directly.
    */
   function applyOptionChanges() {
-    for (const key of Object.keys(changedOptions)) {
+    const changedKeys = Object.keys(changedOptions);
+    for (const key of changedKeys) {
       const value = changedOptions[key];
       options[key] = value;
 
       // Hot-apply source changes by mutating handler references in-place
       if (smoothedHeading && key === 'headingSource') {
-        smoothedHeading.polar.angleHandler.source = value;
-        smoothedHeading.polar.magnitudeHandler.source = value;
+        smoothedHeading.handler.source = value;
       } else if (smoothedAttitude && key === 'attitudeSource') {
         smoothedAttitude.handler.source = value;
       } else if (smoothedBoatSpeed && key === 'boatSpeedSource') {
@@ -610,6 +685,18 @@ module.exports = function (app) {
 
       delete changedOptions[key];
     }
+
+    // Hot-apply smoother class / parameter changes to all user-tuned smoothers.
+    // (noCurrent and smoothedCurrent keep their own fixed Kalman settings.)
+    const SMOOTHER_KEYS = ['smootherClass', 'smootherTau', 'smootherTimeSpan', 'smootherSteadyState'];
+    if (changedKeys.some(k => SMOOTHER_KEYS.includes(k))) {
+      const { SmootherClass: SC, smootherOptions: so } = resolveSmootherConfig();
+      for (const s of [smoothedHeading, smoothedBoatSpeed, smoothedGroundSpeed]) {
+        if (s) { s.setSmootherClass(SC); s.setSmootherOptions(so); }
+      }
+      if (smoothedAttitude) { smoothedAttitude.setSmootherClass(SC); smoothedAttitude.setSmootherOptions(so); }
+    }
+
     saveOptions();
   }
 

@@ -2,14 +2,71 @@
 
 const API_BASE = '/plugins/speedandcurrent';
 
-// ─── Unit conversion (knots / degrees, fixed) ───────────────────────────────
-const vAngle = 180 / Math.PI;
-const dAngle = 0;
-const vSpeed = 1.943844;
-const dSpeed = 1;
+// ─── Unit conversion (respects SK server unitPreferences via displayUnits in meta) ─
+// Fallback defaults are nautical (knots / degrees) when the server does not
+// supply displayUnits (old server or no unit-preference preset configured).
+const DEFAULTS = {
+  speed: { convert: v => v * 1.943844, invert: v => v / 1.943844, symbol: 'kn', decimals: 1 },
+  angle: { convert: v => v * (180 / Math.PI), invert: v => v * (Math.PI / 180), symbol: '°', decimals: 0 },
+};
 
-function cAngle(v) { return (v * vAngle).toFixed(dAngle); }
-function cSpeed(v) { return (v * vSpeed).toFixed(dSpeed); }
+// Cache compiled converters so new Function() is called at most once per formula.
+const _converterCache = new Map();
+
+// Validate a formula string before passing it to Function().
+// Allows only numbers, whitespace, basic math operators, parens, and 'value'.
+function isSafeFormula(f) {
+  return typeof f === 'string' && /^[\d\s+\-*/.()eE]*$/.test(f.replace(/\bvalue\b/g, '0'));
+}
+
+// Build a { convert, symbol, decimals } converter from a displayUnits object.
+// Returns null when displayUnits is absent, unsafe, or uncompilable.
+function buildConverter(displayUnits) {
+  if (!displayUnits || !isSafeFormula(displayUnits.formula)) return null;
+  const key = displayUnits.formula + '|' + (displayUnits.symbol || '') + '|' + (displayUnits.displayFormat || '');
+  if (_converterCache.has(key)) return _converterCache.get(key);
+  let fn;
+  try { fn = new Function('value', 'return ' + displayUnits.formula); fn(1); }
+  catch (e) { _converterCache.set(key, null); return null; }
+  let invertFn = null;
+  if (isSafeFormula(displayUnits.inverseFormula)) {
+    try { invertFn = new Function('value', 'return ' + displayUnits.inverseFormula); invertFn(1); }
+    catch (e) { /* leave null — will fall back to DEFAULTS.invert */ }
+  }
+  const parts = (displayUnits.displayFormat || '0.0').split('.');
+  const decimals = parts.length > 1 ? parts[1].length : 0;
+  const result = { convert: fn, invert: invertFn, symbol: displayUnits.symbol || displayUnits.targetUnit || '', decimals };
+  _converterCache.set(key, result);
+  return result;
+}
+
+// Global converters extracted from meta after loadMeta(); used for attitudes and
+// table axes that don't have per-item displayUnits.
+// speed axis = speed through water; heel axis = attitude roll.
+// These are sourced from the specific items that define the table dimensions.
+const unitConverters = { speed: null, angle: null };
+
+function updateUnitConverters() {
+  // Speed axis: source from the STW polar (smoothed preferred, raw fallback)
+  const speedMeta = metaById['boatSpeed.smoothed'] || metaById['boatSpeed'];
+  unitConverters.speed = buildConverter(speedMeta?.magnitude?.displayUnits) || null;
+  // Heel axis: source from the attitude handler (smoothed preferred, raw fallback)
+  const heelMeta = metaById['attitude.smoothed'] || metaById['attitude'];
+  unitConverters.angle = buildConverter(heelMeta?.displayUnits) || null;
+}
+
+// Update dialog label text to reflect the active unit symbols.
+function applyUnitLabels() {
+  const speedSym = (unitConverters.speed || DEFAULTS.speed).symbol;
+  const angleSym = (unitConverters.angle || DEFAULTS.angle).symbol;
+  ['create', 'resize'].forEach(prefix => {
+    const setLabel = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+    setLabel(`${prefix}-maxSpeed-label`,  `Max speed (${speedSym})`);
+    setLabel(`${prefix}-speedStep-label`, `Speed step (${speedSym})`);
+    setLabel(`${prefix}-maxHeel-label`,   `Max heel (${angleSym})`);
+    setLabel(`${prefix}-heelStep-label`,  `Heel step (${angleSym})`);
+  });
+}
 
 // ─── TableRenderer instance ───────────────────────────────────────────────────
 const tableRenderer = new TableRenderer();
@@ -53,6 +110,10 @@ async function loadMeta() {
       metaById[id] = { ...m, id };
     }
   }
+  // Extract global speed/angle converters from the meta for attitudes and table axes.
+  updateUnitConverters();
+  // Update dialog labels to reflect the active unit symbols.
+  applyUnitLabels();
 }
 
 function isStale(item) {
@@ -113,10 +174,32 @@ async function apiPost(path, body) {
 }
 
 function showMessage(html, isLink = false) {
+  _explicitMsg = html;
+  _refreshMessage();
+}
+
+let _pluginStatus = '';
+let _explicitMsg  = '';
+
+function _refreshMessage() {
   const el = document.getElementById('message');
   if (!el) return;
-  if (isLink) el.innerHTML = html;
-  else el.textContent = html;
+  if (_explicitMsg) {
+    el.style.color = '#842029';
+    if (_explicitMsg.includes('<')) el.innerHTML = _explicitMsg;
+    else el.textContent = _explicitMsg;
+    return;
+  }
+  const isRunningOk = (_pluginStatus === 'Running' || _pluginStatus === '');
+  if (!isRunningOk) {
+    el.style.color =
+      _pluginStatus === 'Stabilizing'                    ? '#084298' :
+      _pluginStatus === 'Falling back to Speed Over Ground' ? '#664d03' : '#842029';
+    el.textContent = _pluginStatus;
+  } else {
+    el.style.color = '';
+    el.textContent = '';
+  }
 }
 
 // ─── Settings: paramMeta ──────────────────────────────────────────────────────
@@ -127,20 +210,51 @@ function showMessage(html, isLink = false) {
 const paramMeta = {
   estimateBoatSpeed:     { label: 'Estimate boat speed',                  type: 'boolean' },
   updateCorrectionTable: { label: 'Update correction table',              type: 'boolean' },
-  assumeCurrent:         { label: 'Assume current during update',         type: 'boolean' },
+  assumeCurrent:         { label: 'Assume current during update',         type: 'boolean', description: 'Experimental, works best when currents are relatively stable.' },
   sogFallback:           { label: 'Groundspeed fallback',                 type: 'boolean', description: 'Output Groundspeed as Boatspeed when the paddlewheel sensor is malfunctioning or stalled.' },
   preventDuplication:    { label: 'Prevent speed duplication',            type: 'boolean', description: 'Replace the raw sensor boatspeed on the Signal K bus with the corrected value, preventing duplicate conflicting values.' },
   stability:             { label: 'Stability (1–20)',                     type: 'number', min: 1, max: 20, step: 1, default: 7, description: 'How quickly the correction table adapts to new observations. Higher values mean slower, more stable changes.' },
+  showStatistics:        { label: 'Show statistics (σ)',                  type: 'boolean', description: 'Display standard deviation alongside smoothed values for debugging.' },
   headingSource:  { label: 'Heading source',          type: 'source', sourceOf: { type: 'delta',   id: 'heading.smoothed'     } },
   boatSpeedSource:{ label: 'Boat speed source',       type: 'source', sourceOf: { type: 'polar',   id: 'boatSpeed.smoothed'   } },
   SOGSource:      { label: 'Groundspeed source',      type: 'source', sourceOf: { type: 'polar',   id: 'groundSpeed.smoothed' } },
   attitudeSource: { label: 'Attitude source',         type: 'source', sourceOf: { type: 'attitude',id: 'attitude.smoothed'    } },
+  smootherClass: {
+    label: 'Smoother type', type: 'select',
+    description: 'Smoothing applied to all sensor inputs for learning only.',
+    options: [
+      { value: 'MovingAverageSmoother', label: 'Moving average (window)' },
+      { value: 'ExponentialSmoother',   label: 'Exponential (τ)' },
+      { value: 'KalmanSmoother',        label: 'Kalman filter' },
+    ]
+  },
+  smootherTau: {
+    label: 'Time constant (τ)', type: 'number', unit: 's',
+    min: 1, max: 60, step: 0.5, default: 3,
+    description: 'Time constant in seconds.'
+  },
+  smootherTimeSpan: {
+    label: 'Window size', type: 'number', unit: 's',
+    min: 2, max: 60, step: 0.5, default: 5,
+    description: 'Moving-average window in seconds.'
+  },
+  smootherSteadyState: {
+    label: 'Kalman gain', type: 'number',
+    min: 0.01, max: 0.99, step: 0.01, default: 0.2,
+    description: 'Steady-state Kalman gain (0 ≈ slow/smooth, 1 ≈ fast/raw). Clamped to 0.01–0.99.'
+  },
 };
 
 // Settings groups for each UI section
 const INPUTS_SOURCE_KEYS      = ['headingSource','boatSpeedSource','SOGSource','attitudeSource'];
 const ESTIMATION_SETTING_KEYS = ['sogFallback','preventDuplication'];
-const LEARNING_SETTING_KEYS   = ['stability','assumeCurrent'];
+const LEARNING_SETTING_KEYS   = ['stability','assumeCurrent','showStatistics'];
+const SMOOTHER_SETTING_KEYS   = [
+  'smootherClass',
+  { key: 'smootherTau',         showIf: cfg => cfg.smootherClass === 'ExponentialSmoother' },
+  { key: 'smootherTimeSpan',    showIf: cfg => (cfg.smootherClass || 'MovingAverageSmoother') === 'MovingAverageSmoother' },
+  { key: 'smootherSteadyState', showIf: cfg => cfg.smootherClass === 'KalmanSmoother' },
+];
 
 function getStateItem(sourceOf) {
   if (!sourceOf) return null;
@@ -158,7 +272,6 @@ function getSources(sourceOf) {
   if (sourceOf.type === 'polar') {
     return Array.isArray(item.state?.magnitude?.sources) ? item.state.magnitude.sources : [];
   }
-  // SmoothedHeading is a PolarSmoother reported as a delta; its sources are under state.angle
   return Array.isArray(item.state?.sources) ? item.state.sources
        : Array.isArray(item.state?.angle?.sources) ? item.state.angle.sources
        : [];
@@ -205,6 +318,22 @@ function createSettingControl(key, meta, value) {
     return wrap;
   }
 
+  if (meta.type === 'select') {
+    const sel = document.createElement('select');
+    sel.className = 'form-select form-select-sm d-inline-block';
+    sel.style.width = '220px';
+    (meta.options || []).forEach(opt => {
+      const o = document.createElement('option');
+      o.value = opt.value; o.textContent = opt.label;
+      sel.appendChild(o);
+    });
+    sel.value = value !== undefined && value !== null ? value : (meta.options[0]?.value || '');
+    sel.addEventListener('change', () => {
+      apiPutSettings({ [key]: sel.value }).catch(e => showMessage(`Save failed: ${e.message}`));
+    });
+    return sel;
+  }
+
   if (meta.type === 'source') {
     if (meta.disabled) {
       const inp = document.createElement('input');
@@ -248,7 +377,9 @@ function renderSettingsRows(tableId, keys) {
   const tbody = table && table.querySelector('tbody');
   if (!tbody || !config) return;
   tbody.innerHTML = '';
-  keys.forEach(key => {
+  keys.forEach(entry => {
+    const key  = typeof entry === 'string' ? entry : entry.key;
+    if (entry.showIf && !entry.showIf(config)) return;
     const meta = paramMeta[key];
     if (!meta) return;
     const value = config[key];
@@ -281,6 +412,7 @@ function renderSettingsPanel() {
   if (!config) return;
   renderSettingsRows('inputs-sources-table',      INPUTS_SOURCE_KEYS);
   renderSettingsRows('estimation-settings-table', ESTIMATION_SETTING_KEYS);
+  renderSettingsRows('smoother-settings-table',   SMOOTHER_SETTING_KEYS);
   renderSettingsRows('learning-settings-table',   LEARNING_SETTING_KEYS);
   renderSectionToggles();
 }
@@ -289,22 +421,37 @@ function renderSettingsPanel() {
 
 function formatPolarValue(p) {
   if (!p) return '—';
-  const spd = typeof p.magnitude === 'number' ? cSpeed(p.magnitude) : '—';
-  const ang = typeof p.angle    === 'number' ? cAngle(p.angle)      : '—';
-  return `${spd} kn / ${ang}°`;
+  const m = metaById[p.id];
+  const speedC = buildConverter(m?.magnitude?.displayUnits) || DEFAULTS.speed;
+  const angleC = buildConverter(m?.angle?.displayUnits)     || DEFAULTS.angle;
+  const spd = typeof p.magnitude === 'number' ? speedC.convert(p.magnitude).toFixed(speedC.decimals) : '—';
+  const ang = typeof p.angle    === 'number' ? angleC.convert(p.angle).toFixed(angleC.decimals)      : '—';
+  const sigma = (config?.showStatistics && p.id.endsWith('.smoothed') && typeof p.trace === 'number')
+    ? ` (σ=${speedC.convert(Math.sqrt(p.trace)).toFixed(speedC.decimals + 2)})` : '';
+  return `${spd} ${speedC.symbol} / ${ang}${angleC.symbol}${sigma}`;
 }
 
 function formatDeltaValue(d) {
   if (!d || typeof d.value !== 'number') return '—';
-  const units = metaById[d.id]?.units;
-  return units === 'm/s' ? `${cSpeed(d.value)} kn` : `${cAngle(d.value)}°`;
+  const m = metaById[d.id];
+  const uc = buildConverter(m?.displayUnits)
+    || (m?.units === 'm/s' ? DEFAULTS.speed : DEFAULTS.angle);
+  const sigma = (config?.showStatistics && d.id.endsWith('.smoothed') && typeof d.variance === 'number')
+    ? ` (σ=${uc.convert(Math.sqrt(d.variance)).toFixed(uc.decimals + 2)})` : '';
+  return `${uc.convert(d.value).toFixed(uc.decimals)} ${uc.symbol}${sigma}`;
 }
 
 function formatAttitudeValue(a) {
   const v = (a && a.value) || {};
-  const roll  = typeof v.roll  === 'number' ? cAngle(v.roll)  : '—';
-  const pitch = typeof v.pitch === 'number' ? cAngle(v.pitch) : '—';
-  return `roll ${roll}° / pitch ${pitch}°`;
+  const variance = a && a.variance;
+  const m = metaById[a?.id];
+  const angleC = buildConverter(m?.displayUnits) || DEFAULTS.angle;
+  const roll  = typeof v.roll  === 'number' ? angleC.convert(v.roll).toFixed(angleC.decimals)  : '—';
+  const pitch = typeof v.pitch === 'number' ? angleC.convert(v.pitch).toFixed(angleC.decimals) : '—';
+  const showSigma = config?.showStatistics && a?.id?.endsWith('.smoothed');
+  const sigmaRoll  = (showSigma && variance && typeof variance.roll  === 'number') ? ` (σ=${angleC.convert(Math.sqrt(variance.roll)).toFixed(angleC.decimals + 2)})`  : '';
+  const sigmaPitch = (showSigma && variance && typeof variance.pitch === 'number') ? ` (σ=${angleC.convert(Math.sqrt(variance.pitch)).toFixed(angleC.decimals + 2)})` : '';
+  return `heel ${roll} ${angleC.symbol} ${sigmaRoll} `;
 }
 
 function itemLabel(item) {
@@ -395,19 +542,46 @@ function renderLiveSections() {
   const tableEl = document.getElementById('table-container');
   if (tableEl) {
     tableEl.innerHTML = '';
-    Object.values(state.tablesById).forEach(t => tableEl.appendChild(tableRenderer.render(t)));
+    const speedC = unitConverters.speed || DEFAULTS.speed;
+    const angleC = unitConverters.angle || DEFAULTS.angle;
+    const tableOpts = {
+      fmtSpeed:    v => speedC.convert(v).toFixed(speedC.decimals),
+      fmtHeel:     v => angleC.convert(v).toFixed(angleC.decimals),
+      speedSymbol: speedC.symbol,
+      heelSymbol:  angleC.symbol,
+    };
+    Object.values(state.tablesById).forEach(t => tableEl.appendChild(tableRenderer.render(t, tableOpts)));
   }
 }
 
 // ─── Polling ──────────────────────────────────────────────────────────────────
 let updateTimer = null;
+let lastTickOk = false;
 
 async function tick() {
   const data = await apiGet('/api/report');
   if (data) {
+    // Recovered from an error — reload meta and config so unit converters,
+    // source lists and settings reflect the (possibly restarted) plugin state.
+    if (!lastTickOk) {
+      await loadMeta();
+      config = await apiGet('/api/settings');
+      if (config && config.tableName) setTableName(config.tableName);
+      renderSettingsPanel();
+    }
+    lastTickOk = true;
     normaliseState(data);
     renderLiveSections();
+  } else {
+    lastTickOk = false;
   }
+  // Always poll status separately so the message reflects plugin state
+  // even when /api/report fails (plugin stopped/restarting).
+  const statusData = await fetch(`${API_BASE}/api/status`, { credentials: 'same-origin' })
+    .then(r => r.ok ? r.json() : null)
+    .catch(() => null);
+  _pluginStatus = statusData?.status ?? '';
+  _refreshMessage();
 }
 
 function startUpdates() {
@@ -536,11 +710,13 @@ function initTableManager() {
     modalStatus('resize', '');
     const t = Object.values(state.tablesById)[0];
     if (t && t.row && t.col) {
-      const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = +v.toFixed(3); };
-      set('resize-maxSpeed',  t.row.max  * 1.943844);
-      set('resize-speedStep', t.row.step * 1.943844);
-      set('resize-maxHeel',   t.col.max  * (180 / Math.PI));
-      set('resize-heelStep',  t.col.step * (180 / Math.PI));
+      const speedC = unitConverters.speed || DEFAULTS.speed;
+      const angleC = unitConverters.angle || DEFAULTS.angle;
+      const setVal = (id, v, dec) => { const el = document.getElementById(id); if (el) el.value = +v.toFixed(dec); };
+      setVal('resize-maxSpeed',  speedC.convert(t.row.max),  Math.max(speedC.decimals, 1));
+      setVal('resize-speedStep', speedC.convert(t.row.step), Math.max(speedC.decimals, 1));
+      setVal('resize-maxHeel',   angleC.convert(t.col.max),  Math.max(angleC.decimals, 0));
+      setVal('resize-heelStep',  angleC.convert(t.col.step), Math.max(angleC.decimals, 0));
     }
     showModal('modal-resize');
   });
@@ -548,12 +724,16 @@ function initTableManager() {
   // ── Create confirm ──
   document.getElementById('btn-create-confirm')?.addEventListener('click', async () => {
     modalStatus('create', '');
+    const speedC = unitConverters.speed || DEFAULTS.speed;
+    const angleC = unitConverters.angle || DEFAULTS.angle;
+    const invertSpeed = speedC.invert || DEFAULTS.speed.invert;
+    const invertAngle = angleC.invert || DEFAULTS.angle.invert;
     const body = {
       name:      (document.getElementById('create-name')?.value || '').trim(),
-      maxSpeed:  Number(document.getElementById('create-maxSpeed')?.value),
-      speedStep: Number(document.getElementById('create-speedStep')?.value),
-      maxHeel:   Number(document.getElementById('create-maxHeel')?.value),
-      heelStep:  Number(document.getElementById('create-heelStep')?.value),
+      maxSpeed:  invertSpeed(Number(document.getElementById('create-maxSpeed')?.value)),
+      speedStep: invertSpeed(Number(document.getElementById('create-speedStep')?.value)),
+      maxHeel:   invertAngle(Number(document.getElementById('create-maxHeel')?.value)),
+      heelStep:  invertAngle(Number(document.getElementById('create-heelStep')?.value)),
     };
     if (!body.name) { modalStatus('create', 'Name is required.'); return; }
     try {
@@ -582,11 +762,15 @@ function initTableManager() {
   // ── Resize confirm ──
   document.getElementById('btn-resize-confirm')?.addEventListener('click', async () => {
     modalStatus('resize', '');
+    const speedC = unitConverters.speed || DEFAULTS.speed;
+    const angleC = unitConverters.angle || DEFAULTS.angle;
+    const invertSpeed = speedC.invert || DEFAULTS.speed.invert;
+    const invertAngle = angleC.invert || DEFAULTS.angle.invert;
     const body = {
-      maxSpeed:  Number(document.getElementById('resize-maxSpeed')?.value),
-      speedStep: Number(document.getElementById('resize-speedStep')?.value),
-      maxHeel:   Number(document.getElementById('resize-maxHeel')?.value),
-      heelStep:  Number(document.getElementById('resize-heelStep')?.value),
+      maxSpeed:  invertSpeed(Number(document.getElementById('resize-maxSpeed')?.value)),
+      speedStep: invertSpeed(Number(document.getElementById('resize-speedStep')?.value)),
+      maxHeel:   invertAngle(Number(document.getElementById('resize-maxHeel')?.value)),
+      heelStep:  invertAngle(Number(document.getElementById('resize-heelStep')?.value)),
     };
     if (!Object.values(body).every(v => Number.isFinite(v) && v > 0)) {
       modalStatus('resize', 'All dimensions must be positive numbers.');

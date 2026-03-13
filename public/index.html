@@ -38,7 +38,7 @@
         <span class="navbar-toggler-icon"></span>
       </button>
     </div>
-    <span id="message" class="text-danger small ms-auto me-3"></span>
+    <span id="message" class="small ms-auto me-3"></span>
   </header>
 
   <div class="app-body">
@@ -124,6 +124,10 @@
               <table class="table table-sm table-borderless mb-0" id="learning-settings-table">
                 <tbody></tbody>
               </table>
+              <h6 class="text-uppercase fw-bold text-muted border-bottom pb-1 mt-3 mb-1 small">Smoother</h6>
+              <table class="table table-sm table-borderless mb-0" id="smoother-settings-table">
+                <tbody></tbody>
+              </table>
               <h6 class="text-uppercase fw-bold text-muted border-bottom pb-1 mt-3 mb-1 small">Inputs</h6>
               <div id="learning-inputs"></div>
               <h6 class="text-uppercase fw-bold text-muted border-bottom pb-1 mt-3 mb-1 small">Intermediates</h6>
@@ -190,10 +194,10 @@
           <table class="table table-sm table-borderless">
             <tbody>
               <tr><td>Name</td><td><input type="text" id="create-name" class="form-control form-control-sm" placeholder="e.g. table-2026" style="width:180px"></td></tr>
-              <tr><td>Max speed (kn)</td><td><input type="number" id="create-maxSpeed" class="form-control form-control-sm" value="9" min="1" max="30" step="1" style="width:80px"></td></tr>
-              <tr><td>Speed step (kn)</td><td><input type="number" id="create-speedStep" class="form-control form-control-sm" value="1" min="0.1" max="5" step="0.1" style="width:80px"></td></tr>
-              <tr><td>Max heel (&deg;)</td><td><input type="number" id="create-maxHeel" class="form-control form-control-sm" value="32" min="1" max="90" step="1" style="width:80px"></td></tr>
-              <tr><td>Heel step (&deg;)</td><td><input type="number" id="create-heelStep" class="form-control form-control-sm" value="8" min="1" max="30" step="1" style="width:80px"></td></tr>
+              <tr><td id="create-maxSpeed-label">Max speed (kn)</td><td><input type="number" id="create-maxSpeed" class="form-control form-control-sm" value="9" min="1" max="30" step="1" style="width:80px"></td></tr>
+              <tr><td id="create-speedStep-label">Speed step (kn)</td><td><input type="number" id="create-speedStep" class="form-control form-control-sm" value="1" min="0.1" max="5" step="0.1" style="width:80px"></td></tr>
+              <tr><td id="create-maxHeel-label">Max heel (&deg;)</td><td><input type="number" id="create-maxHeel" class="form-control form-control-sm" value="32" min="1" max="90" step="1" style="width:80px"></td></tr>
+              <tr><td id="create-heelStep-label">Heel step (&deg;)</td><td><input type="number" id="create-heelStep" class="form-control form-control-sm" value="8" min="1" max="30" step="1" style="width:80px"></td></tr>
             </tbody>
           </table>
         </div>
@@ -264,10 +268,10 @@
           <p class="text-muted small">Resamples learned corrections onto a new grid. The active table file is overwritten.</p>
           <table class="table table-sm table-borderless">
             <tbody>
-              <tr><td>Max speed (kn)</td><td><input type="number" id="resize-maxSpeed" class="form-control form-control-sm" min="1" max="30" step="1" style="width:80px"></td></tr>
-              <tr><td>Speed step (kn)</td><td><input type="number" id="resize-speedStep" class="form-control form-control-sm" min="0.1" max="5" step="0.1" style="width:80px"></td></tr>
-              <tr><td>Max heel (&deg;)</td><td><input type="number" id="resize-maxHeel" class="form-control form-control-sm" min="1" max="90" step="1" style="width:80px"></td></tr>
-              <tr><td>Heel step (&deg;)</td><td><input type="number" id="resize-heelStep" class="form-control form-control-sm" min="1" max="30" step="1" style="width:80px"></td></tr>
+              <tr><td id="resize-maxSpeed-label">Max speed (kn)</td><td><input type="number" id="resize-maxSpeed" class="form-control form-control-sm" min="1" max="30" step="1" style="width:80px"></td></tr>
+              <tr><td id="resize-speedStep-label">Speed step (kn)</td><td><input type="number" id="resize-speedStep" class="form-control form-control-sm" min="0.1" max="5" step="0.1" style="width:80px"></td></tr>
+              <tr><td id="resize-maxHeel-label">Max heel (&deg;)</td><td><input type="number" id="resize-maxHeel" class="form-control form-control-sm" min="1" max="90" step="1" style="width:80px"></td></tr>
+              <tr><td id="resize-heelStep-label">Heel step (&deg;)</td><td><input type="number" id="resize-heelStep" class="form-control form-control-sm" min="1" max="30" step="1" style="width:80px"></td></tr>
             </tbody>
           </table>
         </div>
