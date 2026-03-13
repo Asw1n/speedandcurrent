@@ -7,50 +7,59 @@
 const RAD_TO_DEG = 180 / Math.PI;
 const MPS_TO_KNOTS = 1.943844;
 
-function fmtSpeed(mps)  { return (mps * MPS_TO_KNOTS).toFixed(1) + ' kn'; }
-function fmtHeel(rad)   { return (rad * RAD_TO_DEG).toFixed(0) + '°'; }
+const DEFAULT_SPEED_SYMBOL = 'kn';
+const DEFAULT_HEEL_SYMBOL  = '°';
+function fmtSpeed(mps)  { return (mps * MPS_TO_KNOTS).toFixed(1); }
+function fmtHeel(rad)   { return (rad * RAD_TO_DEG).toFixed(0); }
 function fmtFactor(f)   { const p = (f - 1) * 100; return (p >= 0 ? '+' : '') + p.toFixed(1) + '%'; }
 function fmtLeeway(rad) { const d = rad * RAD_TO_DEG; return (d >= 0 ? '+' : '') + d.toFixed(0) + '° lwy'; }
 
 class TableRenderer {
 
-  render(data) {
+  // opts.fmtSpeed / opts.fmtHeel: optional unit-aware formatter functions.
+  // Fall back to the module-level fmtSpeed / fmtHeel when not provided.
+  render(data, opts = {}) {
     const { id, row, col, table, displayAttributes } = data;
     const label = displayAttributes?.label ?? '';
     const maxDev = this._computeMaxDev(table);
+    const fmtSpeedFn  = opts.fmtSpeed    || fmtSpeed;
+    const fmtHeelFn   = opts.fmtHeel     || fmtHeel;
+    const speedSymbol = opts.speedSymbol || DEFAULT_SPEED_SYMBOL;
+    const heelSymbol  = opts.heelSymbol  || DEFAULT_HEEL_SYMBOL;
+    const cornerText  = `${speedSymbol} / ${heelSymbol}`;
 
     const el = document.createElement('table');
     el.id = id;
     el.classList.add('Table2D');
-    el.appendChild(this._headerRow(col, label));
+    el.appendChild(this._headerRow(col, cornerText, fmtHeelFn));
 
     let rIndex = 0;
     for (let r = row.min; r <= row.max + 0.01; r += row.step) {
-      el.appendChild(this._dataRow(r, rIndex, col, table, maxDev));
+      el.appendChild(this._dataRow(r, rIndex, col, table, maxDev, fmtSpeedFn));
       rIndex++;
     }
     return el;
   }
 
-  _headerRow(col, label) {
+  _headerRow(col, cornerText, fmtHeelFn) {
     const tr = document.createElement('tr');
     const th0 = document.createElement('th');
-    th0.textContent = label;
-    th0.classList.add('TableRowHeader');
+    th0.textContent = cornerText;
+    th0.classList.add('TableRowHeader', 'TableCorner');
     tr.appendChild(th0);
     for (let c = col.min; c <= col.max + 0.01; c += col.step) {
       const th = document.createElement('th');
-      th.textContent = fmtHeel(c);
+      th.textContent = fmtHeelFn(c);
       th.classList.add('TablecolumnHeader');
       tr.appendChild(th);
     }
     return tr;
   }
 
-  _dataRow(r, rIndex, col, table, maxDev) {
+  _dataRow(r, rIndex, col, table, maxDev, fmtSpeedFn) {
     const tr = document.createElement('tr');
     const th = document.createElement('th');
-    th.textContent = fmtSpeed(r);
+    th.textContent = fmtSpeedFn(r);
     th.classList.add('TableRowHeader');
     tr.appendChild(th);
     let cIndex = 0;
