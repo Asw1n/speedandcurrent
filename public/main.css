@@ -45,7 +45,7 @@
 .cell--active    { outline: 3px solid #1565c0; outline-offset: -3px; }
 .cell--neighbour { outline: 1px dashed #90a4ae; outline-offset: -2px; }
 .cell-factor     { font-weight: 600; font-size: 12px; }
-.cell-leeway     { font-size: 11px; color: #555; margin-top: 2px; }
+.cell-leeway     { font-weight: 600; font-size: 12px; margin-top: 2px; }
 
 /* ─── Stable table column widths inside cards ──────────────────────────────── */
 .card-body .table {

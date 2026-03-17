@@ -12,7 +12,7 @@ const DEFAULT_HEEL_SYMBOL  = '°';
 function fmtSpeed(mps)  { return (mps * MPS_TO_KNOTS).toFixed(1); }
 function fmtHeel(rad)   { return (rad * RAD_TO_DEG).toFixed(0); }
 function fmtFactor(f)   { const p = (f - 1) * 100; return (p >= 0 ? '+' : '') + p.toFixed(1) + '%'; }
-function fmtLeeway(rad) { const d = rad * RAD_TO_DEG; return (d >= 0 ? '+' : '') + d.toFixed(0) + '° lwy'; }
+function fmtLeeway(rad) { const d = rad * RAD_TO_DEG; return (d >= 0 ? '+' : '') + d.toFixed(0) + '°'; }
 
 class TableRenderer {
 
@@ -87,7 +87,17 @@ class TableRenderer {
       d.className = 'cell-factor';
       d.textContent = fmtFactor(factor);
       td.appendChild(d);
-      td.style.backgroundColor = this._factorColor(factor, maxDev);
+      const color = this._factorColor(factor, maxDev);
+      if (leeway !== null) {
+        const angleDeg = 90 + leeway * RAD_TO_DEG * 1;
+        td.style.background = `repeating-linear-gradient(
+          ${angleDeg}deg,
+          ${color} 0px, ${color} 9px,
+          #f0f0f0 9px, #f0f0f0 10px
+        )`;
+      } else {
+        td.style.backgroundColor = color;
+      }
     }
     if (leeway !== null) {
       const d = document.createElement('div');

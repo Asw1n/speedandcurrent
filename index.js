@@ -448,7 +448,7 @@ module.exports = function (app) {
       if (Object.keys(changedOptions).length) applyOptionChanges();
 
       const wellUnderway = started < new Date() - 60 * 1000;
-      const minSpeed = SI.fromKnots(options.speedStep / 2);
+      const minSpeed = table.step[0] / 2;
 
       if (options.sogFallback && fallingBackToSog(minSpeed)) {
         setStatus('Falling back to Speed Over Ground');
