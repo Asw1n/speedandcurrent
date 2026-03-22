@@ -1,0 +1,2 @@
+- It tests for plugin.schema() function. does it also test for plugin.schema object? If so it failes to notice my (almost empty) object.
+- warnings handling options. app.readPluginOptions it is. The other one I can understand

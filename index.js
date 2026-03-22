@@ -358,6 +358,14 @@ module.exports = function (app) {
     noCurrent.ySmoother.reset(0,0);
     PolarSmoother.send(app, plugin.id, [noCurrent]);
 
+    MessageHandler.setMeta(app, plugin.id, 'navigation.leewayAngle', {
+      units: 'rad',
+      description: 'Leeway Angle',
+      displayUnits: {
+        category: 'angle'
+      }
+    });
+
 
     // boat speed — STW magnitude is optionally forwarded; leeway angle passOn is always false
     const rawBoatSpeedPolar = new Polar(app, plugin.id, 'boatSpeed');
