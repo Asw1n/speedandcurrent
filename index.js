@@ -45,6 +45,9 @@ module.exports = function (app) {
     showStatistics: false
   };
 
+  const isReadyAndFresh = (input) => !!input && input.ready === true && !input.stale;
+
+
   function readOptions() {
     const stored = app.readPluginOptions();
     const raw = stored && stored.configuration ? stored.configuration : (stored || {});
@@ -537,25 +540,22 @@ module.exports = function (app) {
    */
   function correct(wellUnderway) {
     // prepare iteration
+    if (!isReadyAndFresh(rawAttitude) || !isReadyAndFresh(rawBoatSpeed) || !isReadyAndFresh(rawHeading)) return;
     const heel = rawAttitude.value?.roll;
     const speed = rawBoatSpeed.magnitude;
     const theta = rawHeading.value;
     //app.debug(`Heel: ${SI.toDegrees(heel).toFixed(1)}°, Speed: ${SI.toKnots(speed).toFixed(2)} kn, Heading: ${SI.toDegrees(theta).toFixed(1)}°`);
-    if (!Number.isFinite(heel) || !Number.isFinite(speed) || !Number.isFinite(theta)) {
-      //app.debug("Invalid input data");
-      return;
-    }
-
+    
     correctedBoatSpeed.copyFrom(rawBoatSpeed);
     speedCorrection.setVectorValue({ x: 0, y: 0 }) ;
-    if (speed > 0 && !rawAttitude.stale ) {
+    if (speed > 0 ) {
       const { correction, variance } = table.getCorrection(speed, heel);
       speedCorrection.setVectorValue(correction, variance);
       correctedBoatSpeed.add(speedCorrection);
     }
     Polar.send(app, plugin.id, [correctedBoatSpeed]);
     // estimate current
-    if (wellUnderway && !rawGroundSpeed.stale) {
+    if (wellUnderway && isReadyAndFresh(rawGroundSpeed)) {
       boatSpeedRefGround.copyFrom(correctedBoatSpeed);
       boatSpeedRefGround.rotate(theta);
       rawCurrent.copyFrom(rawGroundSpeed);
@@ -576,15 +576,14 @@ module.exports = function (app) {
    * @param {number} [minSpeed=0] - The minimum speed threshold (in SI units) required to update the correction table.
    */
   function updateTable(assumeCurrent = false, minSpeed = 0) {
+    if (!isReadyAndFresh(smoothedAttitude) || !isReadyAndFresh(smoothedBoatSpeed) || !isReadyAndFresh(smoothedHeading) || !isReadyAndFresh(smoothedGroundSpeed)) return;
     // prepare iteration
     const heel = smoothedAttitude.value.roll;
     const speed = smoothedBoatSpeed.magnitude;
     const theta = smoothedHeading.value;
 
-    if (!Number.isFinite(heel) || !Number.isFinite(speed) || !Number.isFinite(theta)) return;
-
-    // update correction table
-    if (speed > minSpeed && !smoothedAttitude.stale && !smoothedHeading.stale  && !smoothedGroundSpeed.stale) {
+        // update correction table
+    if (speed > minSpeed ) {
       table.update(speed, heel, smoothedGroundSpeed, assumeCurrent ? smoothedCurrent : noCurrent, smoothedBoatSpeed, theta);
     }
 
