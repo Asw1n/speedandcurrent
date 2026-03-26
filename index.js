@@ -33,7 +33,6 @@ module.exports = function (app) {
     assumeCurrent: false,
     headingSource: ' ',
     boatSpeedSource: ' ',
-    COGSource: ' ',
     SOGSource: ' ',
     attitudeSource: ' ',
     preventDuplication: true,
@@ -64,6 +63,11 @@ module.exports = function (app) {
   function saveTableName(name) {
     options.tableName = name;
     saveOptions();
+  }
+
+  // only allow prevent duplication when correctedBoatSpeed is enabled, otherwise it would prevent any boat speed from being published at all
+  const preventDuplication = () => {
+    return options.preventDuplication && options.estimateBoatSpeed;
   }
 
   /**
@@ -117,7 +121,6 @@ module.exports = function (app) {
   let speedCorrection = null;
   let residual = null;
   let reportFull = null;
-  let reportVector = null;
   let table = null;
 
   // add missing declarations
@@ -161,13 +164,7 @@ module.exports = function (app) {
       }
     });
 
-    router.get('/getVectors', (req, res) => {
-      if (!isRunning) {
-        res.status(503).json({ error: "Plugin is not running" });
-      } else {
-        res.json(reportVector.report());
-      }
-    });
+
 
     router.get('/api/status', (req, res) => {
       res.json({ status: pluginStatus, isRunning });
@@ -378,7 +375,7 @@ module.exports = function (app) {
       id: 'boatSpeed',
       path: 'navigation.speedThroughWater',
       source: options.boatSpeedSource,
-      passOn: false,
+      passOn: !preventDuplication(),
       subscribe: true,
       SmootherClass,
       smootherOptions
@@ -453,15 +450,6 @@ module.exports = function (app) {
     }
     reportFull.addTable(table);
 
-    // Make reporting object for webApp
-    reportVector = new Reporter();
-    reportVector.addDelta(rawHeading);
-    reportVector.addPolar(residual);
-    reportVector.addPolar(speedCorrection);
-    if (options.assumeCurrent) reportVector.addPolar(smoothedCurrent);
-    reportVector.addPolar(correctedBoatSpeed);
-    reportVector.addDelta(rawBoatSpeed);
-    reportVector.addPolar(rawGroundSpeed);
     //#endregion
 
     isRunning = true;
@@ -506,7 +494,6 @@ module.exports = function (app) {
         speedCorrection = speedCorrection?.terminate();
         residual = residual?.terminate();
         reportFull = null;
-        reportVector = null;
         table = null;
         rawHeading = null;
         rawAttitude = null;
@@ -574,7 +561,7 @@ module.exports = function (app) {
     // Implicit fallback: attitude not ready — correctedBoatSpeed = raw STW, no correction
 
     PolarSmoother.send(app, plugin.id, [smoothedCurrent]);
-    
+
     Polar.send(app, plugin.id, [correctedBoatSpeed]);
   }
 
@@ -683,12 +670,15 @@ module.exports = function (app) {
       } else if (smoothedAttitude && key === 'attitudeSource') {
         smoothedAttitude.handler.source = value;
       } else if (smoothedBoatSpeed && key === 'boatSpeedSource') {
-        smoothedBoatSpeed.polar.magnitudeHandler.source = value;
+        smoothedBoatSpeed.handler.source = value;
       } else if (smoothedGroundSpeed && key === 'SOGSource') {
         smoothedGroundSpeed.polar.magnitudeHandler.source = value;
       } else if (key === 'preventDuplication') {
-        if (smoothedBoatSpeed) smoothedBoatSpeed.polar.magnitudeHandler.passOn = !value;
+        if (smoothedBoatSpeed) smoothedBoatSpeed.handler.passOn = !preventDuplication();
+      } else if (key === 'estimateBoatSpeed' ) {
+        if (smoothedBoatSpeed) smoothedBoatSpeed.handler.passOn = !preventDuplication();
       }
+
       // All other keys (sogFallback, estimateBoatSpeed, updateCorrectionTable,
       // assumeCurrent, stability, startWithNewTable, COGSource) are read
       // directly from options.* so no extra action needed.
