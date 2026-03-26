@@ -532,20 +532,20 @@ function renderGroupInto(elId, polars, deltas, attitudes) {
 function renderLiveSections() {
   // Inputs section — raw sensor readings only (smoothing is internal to the plugin)
   renderGroupInto('inputs-values',
-    filterById(state.polarsAll,    ['boatSpeed', 'groundSpeed']),
-    filterById(state.deltasAll,    ['heading.angle']),
+    filterById(state.polarsAll,    ['groundSpeed']),
+    filterById(state.deltasAll,    ['heading.angle', 'boatSpeed']),
     filterById(state.attitudesAll, ['attitude'])
   );
 
   // Estimation — inputs (raw sensor data used for boat speed estimation)
   renderGroupInto('estimation-inputs',
-    filterById(state.polarsAll,    ['boatSpeed', 'groundSpeed']),
-    filterById(state.deltasAll,    ['heading.angle']),
+    filterById(state.polarsAll,    ['groundSpeed']),
+    filterById(state.deltasAll,    ['heading.angle', 'boatSpeed']),
     filterById(state.attitudesAll, ['attitude'])
   );
   // Estimation — intermediates
   renderGroupInto('estimation-intermediates',
-    filterById(state.polarsAll, ['boatSpeedRefGround', 'speedCorrection']),
+    filterById(state.polarsAll, ['boatSpeedRefGround', 'speedCorrection', 'residual']),
     [], []
   );
   // Estimation — outputs
@@ -563,14 +563,9 @@ function renderLiveSections() {
     ? filterById(state.polarsAll, ['current.smoothed'])
     : [];
   renderGroupInto('learning-inputs',
-    [...filterById(state.polarsAll, ['boatSpeed.smoothed', 'groundSpeed.smoothed']), ...learningCurrentPolars],
-    filterById(state.deltasAll,    ['heading.smoothed']),
+    [...filterById(state.polarsAll, ['groundSpeed.smoothed']), ...learningCurrentPolars],
+    filterById(state.deltasAll,    ['heading.smoothed', 'boatSpeed.smoothed']),
     filterById(state.attitudesAll, ['attitude.smoothed'])
-  );
-  // Learning — intermediates
-  renderGroupInto('learning-intermediates',
-    filterById(state.polarsAll, ['residual']),
-    [], []
   );
   // Learning — warnings
   const learningWarningIds = ['boatSpeed.smoothed', 'groundSpeed.smoothed', 'heading.smoothed', 'attitude.smoothed'];
