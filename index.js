@@ -45,8 +45,7 @@ module.exports = function (app) {
     showStatistics: false
   };
 
-  const isReadyAndFresh = (input) => !!input && input.ready === true && !input.stale;
-
+  
 
   function readOptions() {
     const stored = app.readPluginOptions();
@@ -99,6 +98,7 @@ module.exports = function (app) {
 
   function swapTable(newTable) {
     table = newTable;
+    minSpeed = table.step[0] / 2;
     if (reportFull) reportFull.setTables([table]);
   }
 
@@ -126,6 +126,7 @@ module.exports = function (app) {
   let rawBoatSpeed = null;
   let rawGroundSpeed = null;
   let started = null;
+  let minSpeed = 0;
 
   const plugin = {};
   plugin.id = "SpeedAndCurrent";
@@ -300,6 +301,7 @@ module.exports = function (app) {
     const tableName = options.tableName || 'correctionTable';
     const tableFilePath = path.join(app.getDataDirPath(), tableName + '.json');
     table = loadTable(options, tableFilePath);
+    minSpeed = table.step[0] / 2;
 
     //#region Handler and Polar Initialization
     const { SmootherClass, smootherOptions } = resolveSmootherConfig();
@@ -370,6 +372,7 @@ module.exports = function (app) {
     });
 
 
+
     // boat speed — STW magnitude is optionally forwarded; leeway angle passOn is always false
     const rawBoatSpeedPolar = new Polar(app, plugin.id, 'boatSpeed');
     rawBoatSpeedPolar.configureMagnitude('navigation.speedThroughWater', options.boatSpeedSource, !options.preventDuplication);
@@ -424,6 +427,7 @@ module.exports = function (app) {
       reportFull.addPolar(correctedBoatSpeed);
       reportFull.addPolar(rawGroundSpeed);
       reportFull.addPolar(smoothedCurrent);
+      reportFull.addPolar(residual);
     }
     if (options.updateCorrectionTable) {
       reportFull.addDelta(smoothedHeading);
@@ -433,7 +437,6 @@ module.exports = function (app) {
       if (options.assumeCurrent) {
         reportFull.addPolar(smoothedCurrent);
       }
-      reportFull.addPolar(residual);
     }
     reportFull.addTable(table);
 
@@ -459,24 +462,14 @@ module.exports = function (app) {
       if (Object.keys(changedOptions).length) applyOptionChanges();
 
       const wellUnderway = started < new Date() - 60 * 1000;
-      const minSpeed = table.step[0] / 2;
 
-      if (options.sogFallback && fallingBackToSog(minSpeed)) {
-        setStatus('Falling back to Speed Over Ground');
-        app.debug("Falling back");
-        return;
-      }
-      if (!wellUnderway) {
-        setStatus('Stabilizing');
-      } else {
-        setStatus('Running');
-      }
+      setStatus(wellUnderway ? 'Running' : 'Stabilizing');
       if (options.estimateBoatSpeed) correct(wellUnderway);
       if (options.updateCorrectionTable && wellUnderway) {
-        updateTable(options.assumeCurrent, minSpeed);
+        updateTable();
         // Save correction table periodically
         const now = new Date();
-        if (now - lastSave > 5 * 1000) {
+        if (now - lastSave > 60 * 1000) {
           saveTable(table, path.join(app.getDataDirPath(), table.id + '.json'));
           lastSave = now;
         }
@@ -519,50 +512,63 @@ module.exports = function (app) {
     });
   };
 
-  function fallingBackToSog( minSpeed) {
-    if (!rawBoatSpeed.stale && rawBoatSpeed.magnitude > 0) return false;
-    if (rawGroundSpeed.stale || rawGroundSpeed.magnitude < minSpeed) return false;
-    // Fallback to SOG
-    correctedBoatSpeed.setVectorValue({ x: rawGroundSpeed.magnitude, y: 0 });
-    Polar.send(app, plugin.id, [correctedBoatSpeed]);
-    return true;
-  }
-
-   /**
-   * Estimates and applies corrections to boat speed, leeway, and current.
+  /**
+   * Corrects and publishes boat speed. Handles SOG fallback and missing-input
+   * silent fallback so that navigation.speedThroughWater is always written
+   * when estimateBoatSpeed is on, as long as any usable speed source exists.
    *
-   * This function uses the current attitude, boat speed, and heading to compute a correction
-   * vector from the correction table, applies it to the observed boat speed, and sends the
-   * corrected value. If the vessel is well underway, it also estimates the current vector
-   * by comparing the corrected boat speed (rotated to heading) with the ground speed.
+   * Priority order:
+   *   1. STW zero + sogFallback enabled + SOG available → publish SOG magnitude
+   *   2. attitude/heading not ready → publish raw STW unchanged (silent fallback)
+   *   3. All inputs ready → apply table correction; estimate current if wellUnderway
    *
-   * @param {boolean} wellUnderway - True if the vessel is considered underway and current estimation should be performed.
+   * @param {boolean} wellUnderway - Gates current estimation (requires 60 s settling).
    */
   function correct(wellUnderway) {
-    // prepare iteration
-    if (!isReadyAndFresh(rawAttitude) || !isReadyAndFresh(rawBoatSpeed) || !isReadyAndFresh(rawHeading)) return;
-    const heel = rawAttitude.value?.roll;
-    const speed = rawBoatSpeed.magnitude;
-    const theta = rawHeading.value;
-    //app.debug(`Heel: ${SI.toDegrees(heel).toFixed(1)}°, Speed: ${SI.toKnots(speed).toFixed(2)} kn, Heading: ${SI.toDegrees(theta).toFixed(1)}°`);
-    
+    // Priority 1: SOG fallback when STW is stuck at zero
+    // (onChange only fires when STW is ready, so a missing STW cannot reach here)
+    if (options.sogFallback && rawGroundSpeed.ready && rawBoatSpeed.magnitude === 0) {
+      if (rawGroundSpeed.magnitude >= minSpeed) {
+        correctedBoatSpeed.setVectorValue({ x: rawGroundSpeed.magnitude, y: 0 });
+        speedCorrection.setVectorValue({ x: 0, y: 0 });
+        // Current cannot be estimated without valid STW; PolarSmoother will emit
+        // the last known value while fresh, or null once it goes stale.
+        PolarSmoother.send(app, plugin.id, [correctedBoatSpeed, smoothedCurrent]);
+        setStatus('Falling back to Speed Over Ground');
+        return;
+      }
+    }
+
+    // Baseline: raw STW
     correctedBoatSpeed.copyFrom(rawBoatSpeed);
-    speedCorrection.setVectorValue({ x: 0, y: 0 }) ;
-    if (speed > 0 ) {
-      const { correction, variance } = table.getCorrection(speed, heel);
-      speedCorrection.setVectorValue(correction, variance);
-      correctedBoatSpeed.add(speedCorrection);
+    speedCorrection.setVectorValue({ x: 0, y: 0 });
+
+    // Apply table correction when attitude (heel) is available
+    if (rawAttitude.ready) {
+      if (rawBoatSpeed.magnitude > 0) {
+        const { correction, variance } = table.getCorrection(rawBoatSpeed.magnitude, rawAttitude.value?.roll);
+        speedCorrection.setVectorValue(correction, variance);
+        correctedBoatSpeed.add(speedCorrection);
+      }
+      // Current estimation and residual also require heading (to rotate into ground frame)
+      if (rawHeading.ready && rawGroundSpeed.ready) {
+        boatSpeedRefGround.copyFrom(correctedBoatSpeed);
+        boatSpeedRefGround.rotate(rawHeading.value);
+        // Current estimation gated by wellUnderway (smoothers need to settle first)
+        if (wellUnderway) {
+          rawCurrent.copyFrom(rawGroundSpeed);
+          rawCurrent.substract(boatSpeedRefGround);
+          smoothedCurrent.sample();
+        }
+        // Residual: how well correctedBoatSpeed + smoothedCurrent explains groundSpeed
+        residual.copyFrom(rawGroundSpeed);
+        residual.substract(boatSpeedRefGround);
+        residual.substract(smoothedCurrent);
+      }
     }
-    Polar.send(app, plugin.id, [correctedBoatSpeed]);
-    // estimate current
-    if (wellUnderway && isReadyAndFresh(rawGroundSpeed)) {
-      boatSpeedRefGround.copyFrom(correctedBoatSpeed);
-      boatSpeedRefGround.rotate(theta);
-      rawCurrent.copyFrom(rawGroundSpeed);
-      rawCurrent.substract(boatSpeedRefGround);
-      smoothedCurrent.sample();
-    }
-    PolarSmoother.send(app, plugin.id, [smoothedCurrent]);
+    // Implicit fallback: attitude not ready — correctedBoatSpeed = raw STW, no correction
+
+    PolarSmoother.send(app, plugin.id, [correctedBoatSpeed, smoothedCurrent]);
   }
 
   /**
@@ -575,24 +581,13 @@ module.exports = function (app) {
    * @param {boolean} [assumeCurrent=false] - If true, uses the smoothed current for correction; otherwise, assumes no current.
    * @param {number} [minSpeed=0] - The minimum speed threshold (in SI units) required to update the correction table.
    */
-  function updateTable(assumeCurrent = false, minSpeed = 0) {
-    if (!isReadyAndFresh(smoothedAttitude) || !isReadyAndFresh(smoothedBoatSpeed) || !isReadyAndFresh(smoothedHeading) || !isReadyAndFresh(smoothedGroundSpeed)) return;
-    // prepare iteration
-    const heel = smoothedAttitude.value.roll;
-    const speed = smoothedBoatSpeed.magnitude;
-    const theta = smoothedHeading.value;
-
-        // update correction table
-    if (speed > minSpeed ) {
-      table.update(speed, heel, smoothedGroundSpeed, assumeCurrent ? smoothedCurrent : noCurrent, smoothedBoatSpeed, theta);
+  function updateTable() {
+    if (!smoothedAttitude.ready || !smoothedBoatSpeed.ready || !smoothedHeading.ready || !smoothedGroundSpeed.ready || (options.assumeCurrent ? !smoothedCurrent.ready : !noCurrent.ready)) return;
+    
+    // update correction table
+    if (smoothedBoatSpeed.magnitude > minSpeed) {
+      table.update(smoothedBoatSpeed.magnitude, smoothedAttitude.value?.roll, smoothedGroundSpeed, options.assumeCurrent ? smoothedCurrent : noCurrent, smoothedBoatSpeed, smoothedHeading.value);
     }
-
-    // calculate residual
-    residual.copyFrom(smoothedGroundSpeed);
-    boatSpeedRefGround.copyFrom(correctedBoatSpeed);
-    boatSpeedRefGround.rotate(theta);
-    residual.substract(boatSpeedRefGround);
-    residual.substract(smoothedCurrent);
 
   }
 

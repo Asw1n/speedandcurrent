@@ -121,6 +121,36 @@ function isStale(item) {
   return item.state?.stale === true;
 }
 
+function isNotReady(item) {
+  if (!item) return true;
+  return item.state?.ready !== true;
+}
+
+function getAnyItem(id) {
+  return state.polarsById[id] || state.deltasById[id] || state.attitudesById[id] || null;
+}
+
+function renderWarnings(elId, ids) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.innerHTML = '';
+  const notReady = ids.filter(id => isNotReady(getAnyItem(id)));
+  if (notReady.length === 0) return;
+  const h = document.createElement('h6');
+  h.className = 'text-uppercase fw-bold text-muted border-bottom pb-1 mt-3 mb-1 small';
+  h.textContent = 'Warnings';
+  el.appendChild(h);
+  const ul = document.createElement('ul');
+  ul.className = 'list-unstyled text-danger small ps-3';
+  notReady.forEach(id => {
+    const label = metaById[id]?.displayName ?? id;
+    const li = document.createElement('li');
+    li.textContent = `"${label}" — not available`;
+    ul.appendChild(li);
+  });
+  el.appendChild(ul);
+}
+
 // ─── Config (live settings mirror) ───────────────────────────────────────────
 let config = null;
 
@@ -492,9 +522,9 @@ function renderGroupInto(elId, polars, deltas, attitudes) {
   if (!el) return;
   el.innerHTML = '';
   const rows = [
-    ...polars   .map(p => ({ label: itemLabel(p), value: formatPolarValue(p),    stale: isStale(p) })),
-    ...deltas   .map(d => ({ label: itemLabel(d), value: formatDeltaValue(d),    stale: isStale(d) })),
-    ...attitudes.map(a => ({ label: itemLabel(a), value: formatAttitudeValue(a), stale: isStale(a) }))
+    ...polars   .map(p => ({ label: itemLabel(p), value: formatPolarValue(p),    stale: isNotReady(p) })),
+    ...deltas   .map(d => ({ label: itemLabel(d), value: formatDeltaValue(d),    stale: isNotReady(d) })),
+    ...attitudes.map(a => ({ label: itemLabel(a), value: formatAttitudeValue(a), stale: isNotReady(a) }))
   ];
   if (rows.length) el.appendChild(buildDataTable(rows));
 }
@@ -523,6 +553,10 @@ function renderLiveSections() {
     filterById(state.polarsAll, ['correctedBoatSpeed', 'current.smoothed']),
     [], []
   );
+  // Estimation — warnings
+  renderWarnings('estimation-warnings',
+    ['boatSpeed', 'attitude', 'heading.angle', 'groundSpeed']
+  );
 
   // Learning — inputs: smoothed sensors + current if assumeCurrent
   const learningCurrentPolars = (config && config.assumeCurrent)
@@ -538,6 +572,10 @@ function renderLiveSections() {
     filterById(state.polarsAll, ['residual']),
     [], []
   );
+  // Learning — warnings
+  const learningWarningIds = ['boatSpeed.smoothed', 'groundSpeed.smoothed', 'heading.smoothed', 'attitude.smoothed'];
+  if (config && config.assumeCurrent) learningWarningIds.push('current.smoothed');
+  renderWarnings('learning-warnings', learningWarningIds);
   // Correction table
   const tableEl = document.getElementById('table-container');
   if (tableEl) {

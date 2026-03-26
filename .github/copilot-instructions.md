@@ -34,4 +34,8 @@ Ready for enhancement tasks: (a) additional diagnostics vectors, (b) export/impo
 
 Please request clarification before refactoring cross-cutting data flow (correction + current estimation) or introducing a build step.
 
+## Commit hygiene
+
+Before starting work on a task that is unrelated to what was previously worked on in the session, check whether there are uncommitted changes in the workspace (using `git status`). If there are, remind the user to commit or stash those changes before proceeding, and wait for confirmation before making any new edits.
+
 End of instructions.
