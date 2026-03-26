@@ -246,7 +246,7 @@ const paramMeta = {
   stability:             { label: 'Stability (1–20)',                     type: 'number', min: 1, max: 20, step: 1, default: 7, description: 'How quickly the correction table adapts to new observations. Higher values mean slower, more stable changes.' },
   showStatistics:        { label: 'Show statistics (σ)',                  type: 'boolean', description: 'Display standard deviation alongside smoothed values for debugging.' },
   headingSource:  { label: 'Heading source',          type: 'source', sourceOf: { type: 'delta',   id: 'heading.smoothed'     } },
-  boatSpeedSource:{ label: 'Boat speed source',       type: 'source', sourceOf: { type: 'polar',   id: 'boatSpeed.smoothed'   } },
+  boatSpeedSource:{ label: 'Boat speed source',       type: 'source', sourceOf: { type: 'delta',   id: 'boatSpeed.smoothed'   } },
   SOGSource:      { label: 'Groundspeed source',      type: 'source', sourceOf: { type: 'polar',   id: 'groundSpeed.smoothed' } },
   attitudeSource: { label: 'Attitude source',         type: 'source', sourceOf: { type: 'attitude',id: 'attitude.smoothed'    } },
   smootherClass: {

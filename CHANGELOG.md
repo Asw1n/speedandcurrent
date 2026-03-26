@@ -40,4 +40,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 - Option to copy navigation.speedOverGround to navigation.speedThroughWater when speedThroughWater is not properly measured (due to clogged paddlewheel for example). Thanks to Jean-Laurent Girod for the suggestion.
 
+## [1.7.5] - 2025-11-19
+### Added
+- New webApp
+- WebApp allows to change plugin configuration while the plugin is running
+- Support for multiple correction tables (new, copy, delete)
+- Support for altering the dimensions of a correction table (alter)
+- Better edge case handling
+- User selectable options for smoothing method and smoothing parameters
+- Support for unitPreferences 
 
+### Fixed
+- bug where navigation.speedThroughWater was removed from the signalk bus.
+
+### Removed
+-  possibility to set options via the signalk plgin configuration.

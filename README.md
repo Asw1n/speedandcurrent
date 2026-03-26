@@ -32,7 +32,7 @@ After the initial ~60 second stabilization period the plugin starts sending the 
 | Water current set (direction) | self.environment.current.setTrue | rad | True direction (set) the current flows toward. |
 
 Boat speed overwrite / duplication behavior:
-- When the setting "Prevent duplication of boat speed" = true (default): plugin overwrites navigation.speedThroughWater with corrected value.
+- When the setting "Prevent speed duplication" = true (default): plugin overwrites navigation.speedThroughWater with corrected value.
 - When false: both raw and corrected updates exist under navigation.speedThroughWater with distinct source attributes (viewable in deltas / data browser) allowing comparison.
 
 Current vector representation: Published as polar (drift + set). Set angle is the direction the water moves toward (oceanographic convention). Verify tooling expectations if it assumes FROM direction.
@@ -60,7 +60,7 @@ All settings are managed from the plugin webapp. The Signal K admin UI is not us
 | Show Statistics | Off | Displays σ (standard deviation) next to smoothed values. | Enable for debugging or to inspect signal quality. |
 
 ### Smoother
-Controls how raw sensor signals are smoothed before being fed into the correction and learning calculations. The smoother type and its parameter apply to heading, boat speed, ground speed, and attitude.
+Controls how raw sensor signals are smoothed before being fed into the learning calculations. The smoother type and its parameter apply to heading, boat speed, ground speed, and attitude.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -93,8 +93,8 @@ Leave a source blank or set to *(any)* to accept values from all sources. If mul
 ### Output Behavior
 | Setting | Default | Description | Notes |
 |---------|---------|-------------|-------|
-| Prevent duplication of boat speed | On | Overwrites navigation.speedThroughWater with corrected value. | Disable to compare raw vs corrected via distinct source attributes under the same path. |
-| SOG fallback | Off | Copy navigation.speedOverGround (GPS) to navigation.speedThroughWater (Paddle wheel) if paddle wheel malfunction is detected. |  SOG fallback activates when navigation.speedThroughWater = 0 and navigation.speedOverGround > treshold.|
+| Prevent speed duplication | On | Overwrites navigation.speedThroughWater with corrected value. | Disable to compare raw vs corrected via distinct source attributes under the same path. |
+| Groundspeed fallback | Off | Copy navigation.speedOverGround (GPS) to navigation.speedThroughWater (Paddle wheel) if paddle wheel malfunction is detected. | Activates when navigation.speedThroughWater = 0 and navigation.speedOverGround > threshold. |
 
 ### Tips
 1. Be patient with the correction table. Its corrections will improve over time.
@@ -116,7 +116,7 @@ The "Assume Current" option is experimental. It works best on a stable correctio
 ## WebApp Usage Guide
 Open via Signal K Server: Apps → Speed and current.
 
-The webapp has a collapsible sidebar with four sections, and a status message in the top-right of the nav bar (blue = stabilizing, amber = SOG fallback active, red = error or stopped).
+The webapp has a collapsible sidebar with four sections, and a status message in the top-right of the nav bar (blue = stabilizing, amber = SOG fallback active, red = error or stopped). All settings changes take effect immediately — no plugin restart required.
 
 ### Inputs
 The **Inputs** section contains two sub-sections:
@@ -125,17 +125,16 @@ The **Inputs** section contains two sub-sections:
 
 ### Boatspeed Estimation
 The **Boatspeed Estimation** section has an On/Off toggle at the top of the card and contains:
-- **Settings**: `SOG fallback` and `Prevent duplication of boat speed`.
+- **Settings**: `Groundspeed fallback` and `Prevent speed duplication`.
 - **Inputs**: The raw signal values used for correction (heading, raw STW, SOG, attitude).
-- **Intermediates**: Internally derived quantities such as the correction vector and leeway.
-- **Outputs**: Corrected STW, leeway angle, and estimated current.
+- **Intermediates**: Internally derived quantities including the speed correction vector, boat speed over ground, and residual.
+- **Outputs**: Corrected boatspeed & leeway, and estimated current.
 
 ### Correction Table Learning
 The **Correction Table Learning** section has an On/Off toggle and contains:
 - **Settings**: Stability, Assume Current, and Show Statistics (σ display toggle).
 - **Smoother**: Type selector (Moving average / Exponential / Kalman) and its single tuning parameter. Only the parameter relevant to the selected smoother is shown.
 - **Inputs**: Smoothed values fed into the learning algorithm. When Show Statistics is on, σ values are shown.
-- **Intermediates**: Derived observations used to update correction table cells.
 
 ### Correction Table
 The **Correction Table** section shows the current correction table grid. Table management buttons appear top-right:
@@ -146,11 +145,11 @@ The **Correction Table** section shows the current correction table grid. Table 
 
 Each populated cell shows:
 - **Factor** (±%): how much the paddle wheel over- or under-reads at this speed and heel (green = reads slow, orange = reads fast).
-- **Leeway** (°): the estimated sideways drift angle at this speed and heel.
+- **Leeway** (°): the estimated sideways drift angle; also encoded visually as the stripe direction in the cell background.
 
 Cell highlighting:
-- **Bold border**: the most recently updated table cell.
-- **Faint blue tint**: cells contributing to the current interpolation. Deeper = higher weight.
+- **Blue outline**: the most recently updated table cell.
+- **Dashed outline**: cells contributing to the current interpolation.
 - **No content**: not yet populated by learning.
 
 ### Correction Table Health Checklist
