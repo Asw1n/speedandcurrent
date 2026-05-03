@@ -120,6 +120,7 @@ module.exports = function (app) {
   let smoothedGroundSpeed = null;
   let speedCorrection = null;
   let residual = null;
+  let smoothedResidual = null;
   let reportFull = null;
   let table = null;
 
@@ -422,6 +423,10 @@ module.exports = function (app) {
     // residual
     residual = new Polar(app, plugin.id, "residual");
     residual.setMeta({ displayName: "Residual", plane: "Ground" });
+    smoothedResidual = new PolarSmoother(residual, ExponentialSmoother, { tau: 30, timeSpan: 30 }); // id auto-derived: 'residual.smoothed'
+    smoothedResidual.setAngleRange('0to2pi');
+    // smoothedResidual.xSmoother.reset(0, 0.00000001);
+    // smoothedResidual.ySmoother.reset(0, 0.00000001);
 
     //#endregion
 
@@ -438,6 +443,7 @@ module.exports = function (app) {
       reportFull.addPolar(rawGroundSpeed);
       reportFull.addPolar(smoothedCurrent);
       reportFull.addPolar(residual);
+      reportFull.addPolar(smoothedResidual);
     }
     if (options.updateCorrectionTable) {
       reportFull.addDelta(smoothedHeading);
@@ -493,6 +499,7 @@ module.exports = function (app) {
         smoothedGroundSpeed = smoothedGroundSpeed?.terminate();
         speedCorrection = speedCorrection?.terminate();
         residual = residual?.terminate();
+        smoothedResidual = smoothedResidual?.terminate?.();
         reportFull = null;
         table = null;
         rawHeading = null;
@@ -542,25 +549,39 @@ module.exports = function (app) {
         speedCorrection.setVectorValue(correction, variance);
         correctedBoatSpeed.add(speedCorrection);
       }
-      // Current estimation and residual also require heading (to rotate into ground frame)
-      if (rawHeading.ready && rawGroundSpeed.ready) {
+      // Current estimation and residual also require heading (to rotate into ground frame).
+      // Also handle near-zero SOG where COG is unavailable: treat groundspeed as zero vector.
+      const sogHandler = rawGroundSpeed.magnitudeHandler;
+      const nearZeroGroundSpeed = !rawGroundSpeed.ready &&
+        sogHandler.ready &&
+        Number.isFinite(sogHandler.value) &&
+        sogHandler.value < 0.3;
+      if (rawHeading.ready && (rawGroundSpeed.ready || nearZeroGroundSpeed)) {
         boatSpeedRefGround.copyFrom(correctedBoatSpeed);
         boatSpeedRefGround.rotate(rawHeading.value);
         // Current estimation gated by wellUnderway (smoothers need to settle first)
         if (wellUnderway) {
-          rawCurrent.copyFrom(rawGroundSpeed);
+          if (rawGroundSpeed.ready) {
+            rawCurrent.copyFrom(rawGroundSpeed);
+          } else {
+            // COG unavailable but SOG is near-zero: boat is stationary, groundspeed treated as zero
+            rawCurrent.setVectorValue({ x: 0, y: 0 });
+          }
           rawCurrent.substract(boatSpeedRefGround);
           smoothedCurrent.sample();
         }
-        // Residual: how well correctedBoatSpeed + smoothedCurrent explains groundSpeed
-        residual.copyFrom(rawGroundSpeed);
-        residual.substract(boatSpeedRefGround);
-        residual.substract(smoothedCurrent);
+        // Residual requires full groundspeed (both SOG and COG)
+        if (rawGroundSpeed.ready) {
+          residual.copyFrom(rawGroundSpeed);
+          residual.substract(boatSpeedRefGround);
+          residual.substract(smoothedCurrent);
+          smoothedResidual.sample();
+        }
       }
     }
     // Implicit fallback: attitude not ready — correctedBoatSpeed = raw STW, no correction
 
-    PolarSmoother.send(app, plugin.id, [smoothedCurrent]);
+    PolarSmoother.send(app, plugin.id, [smoothedCurrent, smoothedResidual]);
 
     Polar.send(app, plugin.id, [correctedBoatSpeed]);
   }

@@ -545,7 +545,7 @@ function renderLiveSections() {
   );
   // Estimation — intermediates
   renderGroupInto('estimation-intermediates',
-    filterById(state.polarsAll, ['boatSpeedRefGround', 'speedCorrection', 'residual']),
+    filterById(state.polarsAll, ['boatSpeedRefGround', 'speedCorrection', 'residual', 'residual.smoothed']),
     [], []
   );
   // Estimation — outputs
