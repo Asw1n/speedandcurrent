@@ -118,12 +118,42 @@ async function loadMeta() {
 
 function isStale(item) {
   if (!item) return true;
-  return item.state?.stale === true;
+  return item.state?.isStale === true;
 }
 
 function isNotReady(item) {
   if (!item) return true;
   return item.state?.ready !== true;
+}
+
+// Returns a human-readable reason why an item is not ready.
+// Handles three state shapes:
+//   handler-nested  (MessageSmoother, SmoothedAngle):  state.handler.*
+//   magnitude/angle (PolarSmoother):                   state.magnitude.* / state.angle.*
+//   flat top-level  (MessageHandler, Polar):           state.*
+function getNotReadyReason(item) {
+  if (!item) return 'not available';
+  const s = item.state;
+  if (!s) return 'not available';
+
+  let subscribed, pathKnown;
+  if (s.handler !== undefined) {
+    subscribed = s.handler.subscribed;
+    pathKnown  = s.handler.pathKnown;
+  } else if (s.magnitude !== undefined || s.angle !== undefined) {
+    const mag = s.magnitude, ang = s.angle;
+    subscribed = (mag?.subscribed !== false) && (ang?.subscribed !== false);
+    pathKnown  = (mag?.pathKnown  !== false) && (ang?.pathKnown  !== false);
+  } else {
+    subscribed = s.subscribed;
+    pathKnown  = s.pathKnown;
+  }
+
+  if (subscribed === false) return 'not subscribed to Signal K';
+  if (pathKnown  === false) return 'path not found in Signal K';
+  if (!s.hasDelta)          return 'waiting for first data';
+  if (s.isStale)            return 'data is stale';
+  return 'not available';
 }
 
 function getAnyItem(id) {
@@ -143,9 +173,10 @@ function renderWarnings(elId, ids) {
   const ul = document.createElement('ul');
   ul.className = 'list-unstyled text-danger small ps-3';
   notReady.forEach(id => {
+    const item = getAnyItem(id);
     const label = metaById[id]?.displayName ?? id;
     const li = document.createElement('li');
-    li.textContent = `"${label}" — not available`;
+    li.textContent = `"${label}" — ${getNotReadyReason(item)}`;
     ul.appendChild(li);
   });
   el.appendChild(ul);
@@ -273,10 +304,16 @@ const paramMeta = {
     min: 0.01, max: 0.99, step: 0.01, default: 0.2,
     description: 'Steady-state Kalman gain (0 ≈ slow/smooth, 1 ≈ fast/raw). Clamped to 0.01–0.99.'
   },
+  stalenessDetection: {
+    label: 'Staleness detection',
+    type: 'boolean',
+    description: 'Mark inputs as unavailable when no data has been received for a period. '
+  },
 };
 
 // Settings groups for each UI section
 const INPUTS_SOURCE_KEYS      = ['headingSource','boatSpeedSource','SOGSource','attitudeSource'];
+const INPUTS_SETTING_KEYS     = ['stalenessDetection'];
 const ESTIMATION_SETTING_KEYS = ['sogFallback','preventDuplication'];
 const LEARNING_SETTING_KEYS   = ['stability','assumeCurrent','showStatistics'];
 const SMOOTHER_SETTING_KEYS   = [
@@ -441,6 +478,7 @@ function renderSectionToggles() {
 function renderSettingsPanel() {
   if (!config) return;
   renderSettingsRows('inputs-sources-table',      INPUTS_SOURCE_KEYS);
+  renderSettingsRows('inputs-settings-table',     INPUTS_SETTING_KEYS);
   renderSettingsRows('estimation-settings-table', ESTIMATION_SETTING_KEYS);
   renderSettingsRows('smoother-settings-table',   SMOOTHER_SETTING_KEYS);
   renderSettingsRows('learning-settings-table',   LEARNING_SETTING_KEYS);

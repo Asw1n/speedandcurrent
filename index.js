@@ -41,7 +41,8 @@ module.exports = function (app) {
     smootherTau: 3,
     smootherTimeSpan: 5,
     smootherSteadyState: 0.2,
-    showStatistics: false
+    showStatistics: false,
+    stalenessDetection: true
   };
 
   
@@ -109,7 +110,6 @@ module.exports = function (app) {
   let isRunning = false;
   let pluginStatus = 'Stopped';
   let smoothedHeading = null;
-  let stability = null;
   let smoothedAttitude = null;
   let rawCurrent = null;
   let smoothedCurrent = null;
@@ -124,7 +124,6 @@ module.exports = function (app) {
   let reportFull = null;
   let table = null;
 
-  // add missing declarations
   let rawHeading = null;
   let rawAttitude = null;
   let noCurrent = null;
@@ -314,6 +313,10 @@ module.exports = function (app) {
       SmootherClass,
       smootherOptions
     });
+    // The magnitude handler has a fixed value of 1 and is never subscribed, so its timestamp
+    // stays null forever. Staleness detection on it would always force _stale=true, blocking
+    // processChanges() from setting polar._ready=true on every heading delta.
+    smoothedHeading.polar.magnitudeHandler.stalenessDetection = false;
     rawHeading = smoothedHeading.handler;
 
     //attitude
@@ -360,6 +363,7 @@ module.exports = function (app) {
     });
     noCurrent.xSmoother.reset(0,0);
     noCurrent.ySmoother.reset(0,0);
+    noCurrent.stalenessDetection = false; // noCurrent is a fixed zero-vector, never receives live data
     PolarSmoother.send(app, plugin.id, [noCurrent]);
 
     MessageHandler.setMeta(app, plugin.id, 'navigation.leewayAngle', {
@@ -425,8 +429,6 @@ module.exports = function (app) {
     residual.setMeta({ displayName: "Residual", plane: "Ground" });
     smoothedResidual = new PolarSmoother(residual, ExponentialSmoother, { tau: 30, timeSpan: 30 }); // id auto-derived: 'residual.smoothed'
     smoothedResidual.setAngleRange('0to2pi');
-    // smoothedResidual.xSmoother.reset(0, 0.00000001);
-    // smoothedResidual.ySmoother.reset(0, 0.00000001);
 
     //#endregion
 
@@ -458,6 +460,18 @@ module.exports = function (app) {
 
     //#endregion
 
+    // Apply staleness detection to all subscribed smoother instances.
+    // noCurrent is intentionally excluded — it is a fixed zero-vector and never receives live data.
+    // Only apply when sd = false: all smoothers already default to stalenessDetection = true.
+    // Explicitly calling the setter with true at startup forces _stale = true on handlers that have
+    // never received data, causing the first sample to be dropped (library side-effect).
+    const sd = options.stalenessDetection ?? true;
+    if (!sd) {
+      for (const s of [smoothedHeading, smoothedAttitude, smoothedBoatSpeed, smoothedGroundSpeed, smoothedCurrent, smoothedResidual]) {
+        if (s) s.stalenessDetection = false;
+      }
+    }
+
     isRunning = true;
     started = new Date();
     setStatus('Running');
@@ -488,7 +502,6 @@ module.exports = function (app) {
     return new Promise((resolve, reject) => {
       try {
         smoothedHeading = smoothedHeading?.terminate();
-        stability = stability?.terminate?.();
         smoothedAttitude = smoothedAttitude?.terminate();
         rawCurrent = rawCurrent?.terminate();
         smoothedCurrent = smoothedCurrent?.terminate?.();
@@ -587,17 +600,12 @@ module.exports = function (app) {
   }
 
   /**
-   * Updates the correction table and calculates the residual error.
-   *
-   * This function uses the current smoothed attitude, boat speed, and heading to update the correction table
-   * if the boat speed exceeds the specified minimum. It also calculates the residual between the measured ground speed
-   * and the expected ground speed (corrected boat speed plus current). The correction table is periodically saved.
-   *
-   * @param {boolean} [assumeCurrent=false] - If true, uses the smoothed current for correction; otherwise, assumes no current.
-   * @param {number} [minSpeed=0] - The minimum speed threshold (in SI units) required to update the correction table.
+   * Updates the correction table from the current smoothed inputs.
+   * Reads assumeCurrent and minSpeed from module-level options/state;
+   * silently returns if any required input is not yet ready.
    */
   function updateTable() {
-    lrnBoatSpeed.setVectorValue({ x: smoothedBoatSpeed.value, y: 0 });
+    lrnBoatSpeed.setVectorValue({ x: smoothedBoatSpeed.value, y: 0 }, { x: smoothedBoatSpeed.variance ?? 0, y: 0 });
     if (!smoothedAttitude.ready || !smoothedBoatSpeed.ready || !smoothedHeading.ready || !smoothedGroundSpeed.ready || (options.assumeCurrent ? !smoothedCurrent.ready : !noCurrent.ready)) return;
     
     // update correction table
@@ -608,37 +616,12 @@ module.exports = function (app) {
   }
 
   /**
-   * Checks if the correction table in settings matches the expected row and column configuration.
+   * Loads or creates a correction table from disk.
+   * If the file exists it is deserialized; otherwise a new table is created
+   * with default dimensions and saved to disk.
    *
-   * This function compares the min, max, and step values of the row and column definitions
-   * in the current correction table against the provided row and col objects. Returns true
-   * if all values match, otherwise false. If the table is missing or not properly structured,
-   * returns false.
-   *
-   * @param {Object} row - The expected row configuration ({ min, max, step }).
-   * @param {Object} col - The expected column configuration ({ min, max, step }).
-   * @returns {boolean} True if the table matches the configuration, false otherwise.
-   */
-  function enforceConsistancy(data, row, col) {
-    if (!data) return false;
-    if (!data.row) return false;
-    if (data.row.min != row.min) return false;
-    if (data.row.max != row.max) return false;
-    if (data.row.step != row.step) return false;
-    if (data.col.min != col.min) return false;
-    if (data.col.max != col.max) return false;
-    if (data.col.step != col.step) return false;
-    return true;
-  }
-
-  /**
-   * Loads or creates a correction table based on the provided options.
-   *
-   * This function checks if the correction table in the options matches the expected row and column configuration.
-   * If so, it loads the table from JSON; otherwise, it creates a new correction table with the specified parameters.
-   * The table is labeled and, if newly created, saved to the plugin options.
-   *
-   * @param {Object} options - The plugin options containing correction table settings and parameters.
+   * @param {Object} options - Plugin options (stability, tableName, and dimension defaults).
+   * @param {string} filePath - Absolute path of the JSON file to read.
    * @returns {CorrectionTable} The loaded or newly created CorrectionTable instance.
    */
   function loadTable(options, filePath) {
@@ -660,15 +643,10 @@ module.exports = function (app) {
   }
 
   /**
-   * Saves the correction table to the plugin options and logs the save event.
+   * Saves the correction table to disk as JSON.
    *
-   * This function serializes the provided correction table, updates the options object,
-   * and triggers the plugin's save mechanism. It returns the current date/time to indicate
-   * when the save occurred.
-   *
-   * @param {Object} options - The plugin options object to update.
    * @param {CorrectionTable} correctionTable - The correction table instance to save.
-   * @returns {Date} The date and time when the table was saved.
+   * @param {string} filePath - Absolute path of the target JSON file.
    */
   function saveTable(correctionTable, filePath) {
     correctionTable.saveToFile(filePath);
@@ -698,6 +676,12 @@ module.exports = function (app) {
         if (smoothedBoatSpeed) smoothedBoatSpeed.handler.passOn = !preventDuplication();
       } else if (key === 'estimateBoatSpeed' ) {
         if (smoothedBoatSpeed) smoothedBoatSpeed.handler.passOn = !preventDuplication();
+      } else if (key === 'stalenessDetection') {
+        const sdVal = Boolean(value);
+        for (const s of [smoothedHeading, smoothedAttitude, smoothedBoatSpeed, smoothedGroundSpeed, smoothedCurrent, smoothedResidual]) {
+          if (s) s.stalenessDetection = sdVal;
+        }
+        // noCurrent is always excluded from staleness detection
       }
 
       // All other keys (sogFallback, estimateBoatSpeed, updateCorrectionTable,

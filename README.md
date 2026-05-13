@@ -104,7 +104,7 @@ Leave a source blank or set to *(any)* to accept values from all sources. If mul
 5. The plugin will always estimate currents when Estimate boat speed is enabled. Even when Assume currents is disabled, as this setting is only used in updating the correction table.
 
 ## Persistence & Data Storage
-Each correction table is saved as a `.json` file in Signal K's plugin data directory (typically `~/.signalk/plugin-config-data/speedandcurrent/`). The active table name is stored in the plugin options and reloaded automatically on restart. While learning is active, the table is written to disk approximately every 5 seconds.
+Each correction table is saved as a `.json` file in Signal K's plugin data directory (typically `~/.signalk/plugin-config-data/speedandcurrent/`). The active table name is stored in the plugin options and reloaded automatically on restart. While learning is active, the table is written to disk approximately every 60 seconds.
 
 Safety & backup:
 - Tables can be copied to a new name with the **Copy** button before experimenting.

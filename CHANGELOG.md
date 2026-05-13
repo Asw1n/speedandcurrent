@@ -55,3 +55,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Removed
 -  possibility to set options via the signalk plgin configuration.
+
+## [1.7.7] - 2026-5-13
+### Added
+- Optional staleness detection for inputs
+- Precise warnings on state of inputs

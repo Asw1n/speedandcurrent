@@ -91,39 +91,6 @@ class CorrectionTable extends Table2D{
     this.lastUpdatedCell = cell;
   }
 
-  getKalmanCorrection(speed, heel) {
-    /**
-   * Return a estimated correction based on interpolation and weighting of correction variance;
-   */
-    if (speed == 0) return { x: 0, y: 0 };
-    const neighbours = this.findNeighbours(speed, heel);
-    let totalWeightX   = 0;
-    let totalWeightY   = 0;
-    let x = 0;
-    let y = 0;
-    for (const neighbour of neighbours) {
-      const { cell:correction, xdist, ydist } = neighbour;
-      if (correction.N > 0) {
-        const weightX = 1 / (xdist + 1e-6) ;
-        const weightY = 1 / (ydist + 1e-6) ;
-        const varianceX = correction.covariance[0][0];
-        const varianceY = correction.covariance[1][1];
-        const N = correction.N;
-        const varWeightX = weightX * N / (varianceX + 1e-6);
-        const varWeightY = weightY * N / (varianceY + 1e-6);
-        x += correction.x * varWeightX;
-        y += correction.y * varWeightY; 
-        totalWeightX += varWeightX;
-        totalWeightY += varWeightY;
-      }
-    }
-    if (totalWeightX == 0 || totalWeightY == 0) return { x: 0, y: 0 };  
-    x = x / totalWeightX;
-    y = y / totalWeightY;
-    return { x:x, y:y };
-
-  }
-
   getCorrection(speed, heel) {
     this.neighbours = this.findClosest(speed, heel, 5);
     if (this.neighbours.length == 0) return { correction: {x: 0, y: 0}, variance: null };
@@ -187,7 +154,6 @@ class CorrectionTable extends Table2D{
               if (cov && Array.isArray(cov) && cov[0] && cov[1] && Number.isFinite(cov[0][0]) && Number.isFinite(cov[1][1])) {
                 const a = cov[0][0];
                 const d = cov[1][1];
-                //trace = Math.sqrt(a*a + d*d);
                 trace = a + d;
               }
             } catch { /* silent */ }
@@ -285,7 +251,7 @@ class CorrectionEstimator {
 
     var groundCov = rotateVariance(groundSpeed.variance);
     var currentCov = rotateVariance(current.variance);
-    var boatCov = [[boatSpeed.variance[0], 0], [0, boatSpeed.variance[1]]];
+    var boatCov = [[boatSpeed.xVariance, 0], [0, boatSpeed.yVariance]];
 
     const observationCovariance = [[
       groundCov[0][0] + currentCov[0][0] + boatCov[0][0],
