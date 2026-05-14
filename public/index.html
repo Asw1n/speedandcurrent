@@ -175,6 +175,32 @@
               </div>
             </div>
             <div class="card-body">
+              <div class="table-legend small text-muted mb-3">
+                <div class="table-legend-row">
+                  <span class="legend-swatch legend-swatch--green"></span>
+                  <span><strong>Green</strong> — paddlewheel reads slow (factor &gt; 1, speed is corrected up)</span>
+                </div>
+                <div class="table-legend-row">
+                  <span class="legend-swatch legend-swatch--orange"></span>
+                  <span><strong>Orange</strong> — paddlewheel reads fast (factor &lt; 1, speed is corrected down)</span>
+                </div>
+                <div class="table-legend-row">
+                  <span class="legend-swatch legend-swatch--stripe"></span>
+                  <span><strong>Stripe angle</strong> — encodes leeway direction; stripes are tilted proportionally to the leeway correction (°)</span>
+                </div>
+                <div class="table-legend-row">
+                  <span class="legend-swatch legend-swatch--active">+1.2%</span>
+                  <span><strong>Blue text</strong> — most recently updated cell</span>
+                </div>
+                <div class="table-legend-row">
+                  <span class="legend-swatch legend-swatch--neighbour"></span>
+                  <span><strong>Faint tint</strong> — interpolation neighbours used in the current estimate</span>
+                </div>
+                <div class="table-legend-row mt-1">
+                  <span class="legend-label-wide">Cell values:</span>
+                  <span>top = speed-correction factor (±%), bottom = leeway correction (±°)</span>
+                </div>
+              </div>
               <div id="table-container"></div>
             </div>
           </div>

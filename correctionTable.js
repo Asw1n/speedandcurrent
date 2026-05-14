@@ -261,7 +261,6 @@ class CorrectionEstimator {
       groundCov[1][1] + currentCov[1][1] + boatCov[1][1]],
     ];
     this.filterState = this.filter.filter({ previousCorrected: this.filterState, observation, observationCovariance });
-    //console.log("Filterstate:", this.filterState, "Covariance:", observationCovariance);
     return true;
   }
 

@@ -606,7 +606,7 @@ module.exports = function (app) {
    */
   function updateTable() {
     lrnBoatSpeed.setVectorValue({ x: smoothedBoatSpeed.value, y: 0 }, { x: smoothedBoatSpeed.variance ?? 0, y: 0 });
-    if (!smoothedAttitude.ready || !smoothedBoatSpeed.ready || !smoothedHeading.ready || !smoothedGroundSpeed.ready || (options.assumeCurrent ? !smoothedCurrent.ready : !noCurrent.ready)) return;
+    if (!smoothedAttitude.ready || !smoothedBoatSpeed.ready || !smoothedHeading.ready || !smoothedGroundSpeed.ready || (options.assumeCurrent && !smoothedCurrent.ready)) return;
     
     // update correction table
     if (smoothedBoatSpeed.value > minSpeed) {

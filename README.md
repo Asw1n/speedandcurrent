@@ -148,8 +148,8 @@ Each populated cell shows:
 - **Leeway** (°): the estimated sideways drift angle; also encoded visually as the stripe direction in the cell background.
 
 Cell highlighting:
-- **Blue outline**: the most recently updated table cell.
-- **Dashed outline**: cells contributing to the current interpolation.
+- **Blue values**: the most recently updated table cell (factor and leeway text rendered in blue).
+- **Thin border**: cells contributing to the current interpolation.
 - **No content**: not yet populated by learning.
 
 ### Correction Table Health Checklist
