@@ -447,14 +447,17 @@ module.exports = function (app) {
       reportFull.addPolar(residual);
       reportFull.addPolar(smoothedResidual);
     }
-    if (options.updateCorrectionTable) {
-      reportFull.addDelta(smoothedHeading);
-      reportFull.addAttitude(smoothedAttitude);
-      reportFull.addDelta(smoothedBoatSpeed);
-      reportFull.addPolar(smoothedGroundSpeed);
-      if (options.assumeCurrent) {
-        reportFull.addPolar(smoothedCurrent);
-      }
+    // Smoothed learning inputs are always subscribed regardless of updateCorrectionTable,
+    // so always add them to the report — otherwise warnings never clear when
+    // learning was disabled at startup and later toggled on.
+    reportFull.addDelta(smoothedHeading);
+    reportFull.addAttitude(smoothedAttitude);
+    reportFull.addDelta(smoothedBoatSpeed);
+    reportFull.addPolar(smoothedGroundSpeed);
+    // smoothedCurrent is already added by the estimateBoatSpeed block when that is on;
+    // only add it here when estimateBoatSpeed is off, to avoid a duplicate entry.
+    if (options.assumeCurrent && !options.estimateBoatSpeed) {
+      reportFull.addPolar(smoothedCurrent);
     }
     reportFull.addTable(table);
 
@@ -486,14 +489,20 @@ module.exports = function (app) {
 
       setStatus(wellUnderway ? 'Running' : 'Stabilizing');
       if (options.estimateBoatSpeed) correct(wellUnderway);
-      if (options.updateCorrectionTable && wellUnderway) {
-        updateTable();
-        // Save correction table periodically
-        const now = new Date();
-        if (now - lastSave > 60 * 1000) {
-          saveTable(table, path.join(app.getDataDirPath(), table.id + '.json'));
-          lastSave = now;
+      if (options.updateCorrectionTable) {
+        if (wellUnderway) {
+          updateTable();
+          // Save correction table periodically
+          const now = new Date();
+          if (now - lastSave > 60 * 1000) {
+            saveTable(table, path.join(app.getDataDirPath(), table.id + '.json'));
+            lastSave = now;
+          }
+        } else {
+          table.lastUpdateResult = 'stabilizing';
         }
+      } else {
+        table.lastUpdateResult = null;
       }
     };
   }
@@ -606,11 +615,16 @@ module.exports = function (app) {
    */
   function updateTable() {
     lrnBoatSpeed.setVectorValue({ x: smoothedBoatSpeed.value, y: 0 }, { x: smoothedBoatSpeed.variance ?? 0, y: 0 });
-    if (!smoothedAttitude.ready || !smoothedBoatSpeed.ready || !smoothedHeading.ready || !smoothedGroundSpeed.ready || (options.assumeCurrent && !smoothedCurrent.ready)) return;
+    if (!smoothedAttitude.ready || !smoothedBoatSpeed.ready || !smoothedHeading.ready || !smoothedGroundSpeed.ready || (options.assumeCurrent && !smoothedCurrent.ready)) {
+      table.lastUpdateResult = 'invalid';
+      return;
+    }
     
     // update correction table
     if (smoothedBoatSpeed.value > minSpeed) {
       table.update(smoothedBoatSpeed.value, smoothedAttitude.value?.roll, smoothedGroundSpeed, options.assumeCurrent ? smoothedCurrent : noCurrent, lrnBoatSpeed, smoothedHeading.value);
+    } else {
+      table.lastUpdateResult = 'waiting';
     }
 
   }

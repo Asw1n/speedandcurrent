@@ -609,6 +609,31 @@ function renderLiveSections() {
   const learningWarningIds = ['boatSpeed.smoothed', 'groundSpeed.smoothed', 'heading.smoothed', 'attitude.smoothed'];
   if (config && config.assumeCurrent) learningWarningIds.push('current.smoothed');
   renderWarnings('learning-warnings', learningWarningIds);
+  // Learning status section
+  const statusTbody = document.querySelector('#learning-status-table tbody');
+  if (statusTbody) {
+    const tableData = Object.values(state.tablesById)[0];
+    const result = tableData?.lastUpdateResult ?? null;
+    const learningText  = result === null          ? 'Off'
+                        : result === 'stabilizing' ? 'Stabilising'
+                        : 'Active';
+    const learningClass = result === null          ? 'text-muted'
+                        : result === 'stabilizing' ? 'text-warning'
+                        : 'text-success';
+    const obsText       = result === 'accepted'    ? 'Accepted'
+                        : result === 'rejected'    ? 'Rejected'
+                        : result === 'invalid'     ? 'Invalid'
+                        : result === 'waiting'     ? 'Below threshold'
+                        : '\u2014';
+    const obsClass      = result === 'accepted'    ? 'text-success'
+                        : result === 'rejected'    ? 'text-danger'
+                        : result === 'invalid'     ? 'text-warning'
+                        : result === 'waiting'     ? 'text-muted'
+                        : 'text-muted';
+    statusTbody.innerHTML =
+      `<tr><td class="text-muted small">Learning</td><td class="small fw-bold ${learningClass}">${learningText}</td></tr>` +
+      `<tr><td class="text-muted small">Observation</td><td class="small fw-bold ${obsClass}">${obsText}</td></tr>`;
+  }
   // Correction table
   const tableEl = document.getElementById('table-container');
   if (tableEl) {

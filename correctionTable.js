@@ -82,13 +82,15 @@ class CorrectionTable extends Table2D{
   constructor(id, row, col, stability=5) {
     super(id, row, col, CorrectionEstimator, CorrectionEstimator.getFilterModel(stability));
     this.lastUpdatedCell = null;
+    this.lastUpdateResult = null;
     this.neighbours = [];
   }
   
   update(speed, heel, groundSpeed, current, boatSpeed, heading) {
     const cell = this.getCell(speed, heel);
-    cell?.update(groundSpeed, current, boatSpeed, heading);
+    const accepted = cell?.update(groundSpeed, current, boatSpeed, heading);
     this.lastUpdatedCell = cell;
+    this.lastUpdateResult = accepted === true ? 'accepted' : 'rejected';
   }
 
   getCorrection(speed, heel) {
@@ -177,7 +179,8 @@ class CorrectionTable extends Table2D{
           return cellReport;
         })
       ),
-      displayAttributes: this.displayAttributes 
+      displayAttributes: this.displayAttributes,
+      lastUpdateResult: this.lastUpdateResult ?? null
     };
   }
 
@@ -260,6 +263,36 @@ class CorrectionEstimator {
       groundCov[1][0] + currentCov[1][0] + boatCov[1][0],
       groundCov[1][1] + currentCov[1][1] + boatCov[1][1]],
     ];
+    // Mahalanobis distance check.
+    // For empty cells (filterState === null) we use a diffuse prior — mean (0,0),
+    // variance DIFFUSE_PRIOR_VAR — expressing "assume no correction needed, but
+    // with high uncertainty".  This gates the very first observation instead of
+    // accepting it unconditionally, preventing a single outlier from locking a
+    // cell at a bad value.
+    const DIFFUSE_PRIOR_VAR = 1.0; // (m/s)² — rejects corrections > ~3 m/s from zero
+    const priorMean = this.filterState !== null
+      ? [this.filterState.mean[0][0], this.filterState.mean[1][0]]
+      : [0, 0];
+    const priorCov = this.filterState !== null
+      ? this.filterState.covariance
+      : [[DIFFUSE_PRIOR_VAR, 0], [0, DIFFUSE_PRIOR_VAR]];
+    const inno = [observation[0] - priorMean[0], observation[1] - priorMean[1]];
+    const S = [
+      [priorCov[0][0] + observationCovariance[0][0],
+       priorCov[0][1] + observationCovariance[0][1]],
+      [priorCov[1][0] + observationCovariance[1][0],
+       priorCov[1][1] + observationCovariance[1][1]]
+    ];
+    const det = S[0][0] * S[1][1] - S[0][1] * S[1][0];
+    if (Number.isFinite(det) && det > 1e-12) {
+      const Sinv = [
+        [ S[1][1] / det, -S[0][1] / det],
+        [-S[1][0] / det,  S[0][0] / det]
+      ];
+      const d2 = inno[0] * (Sinv[0][0] * inno[0] + Sinv[0][1] * inno[1])
+               + inno[1] * (Sinv[1][0] * inno[0] + Sinv[1][1] * inno[1]);
+      if (d2 > 9.21) return false;
+    }
     this.filterState = this.filter.filter({ previousCorrected: this.filterState, observation, observationCovariance });
     return true;
   }

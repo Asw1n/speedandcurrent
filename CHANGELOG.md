@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
+## [1.7.9] - 2026-5-14
+### Added
+- Learning status indicator in the webapp showing whether the correction table is active, stabilising, or off, and whether the last observation was accepted, rejected, invalid, or below threshold.
+- Outlier rejection using Mahalanobis distance: bad observations are discarded before being fed into the Kalman filter, preventing a single bad sample from corrupting a cell.
+
+### Fixed
+- Smoothed learning inputs are now always registered in the reporter regardless of whether `updateCorrectionTable` is enabled, so warnings clear correctly when learning is toggled on at runtime.
+
 ## [1.7.8] - 2026-5-14
 ### Added
 - Legend below the correction table explaining factor / leeway values, background colour coding, stripe direction, active cell, and neighbour cell indicators.
