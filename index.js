@@ -338,8 +338,8 @@ module.exports = function (app) {
     MessageHandler.setMeta(app, plugin.id, "environment.current.drift", {units: "m/s", type: "number", description: "Speed of the current"});
     MessageHandler.setMeta(app, plugin.id, "environment.current.setTrue", { units: "rad", type: "number", description: "Direction of the current" });
     rawCurrent = new Polar(app, plugin.id, "current");
-    rawCurrent.configureMagnitude("self.environment.current.drift");
-    rawCurrent.configureAngle("self.environment.current.setTrue");
+    rawCurrent.configureMagnitude("environment.current.drift");
+    rawCurrent.configureAngle("environment.current.setTrue");
     rawCurrent.setMeta({ displayName: "Current", plane: "Ground" });
     rawCurrent.setAngleRange('0to2pi');
     smoothedCurrent = new PolarSmoother(rawCurrent, KalmanSmoother, { processVariance: 0.000001, measurementVariance: 0.01 }); // id auto-derived: 'current.smoothed'
@@ -352,8 +352,8 @@ module.exports = function (app) {
     // no current
     noCurrent = createSmoothedPolar({
       id: "noCurrent",
-      pathMagnitude: "self.environment.current.drift",
-      pathAngle: "self.environment.current.setTrue",
+      pathMagnitude: "environment.current.drift",
+      pathAngle: "environment.current.setTrue",
       subscribe: false,
       app,
       pluginId: plugin.id,

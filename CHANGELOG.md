@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
+## [1.7.10] - 2026-5-14
+### Fixed
+- Removed incorrect `self.` prefix from Signal K paths.
+
 ## [1.7.9] - 2026-5-14
 ### Added
 - Learning status indicator in the webapp showing whether the correction table is active, stabilising, or off, and whether the last observation was accepted, rejected, invalid, or below threshold.
