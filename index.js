@@ -105,6 +105,7 @@ module.exports = function (app) {
     table = newTable;
     minSpeed = table.step[0] / 2;
     if (reportFull) reportFull.setTables([table]);
+    lastSave = new Date(); // explicit table operations already save; defer next periodic save
   }
 
   let isRunning = false;
@@ -131,6 +132,7 @@ module.exports = function (app) {
   let rawGroundSpeed = null;
   let started = null;
   let minSpeed = 0;
+  let lastSave = 0;
 
   const plugin = {};
   plugin.id = "SpeedAndCurrent";
@@ -477,10 +479,10 @@ module.exports = function (app) {
 
     isRunning = true;
     started = new Date();
+    lastSave = 0;
     setStatus('Running');
     app.debug("Running");
 
-    let lastSave = 0;
     smoothedBoatSpeed.onChange = () => {
       // Drain any pending option changes before calculating
       if (Object.keys(changedOptions).length) applyOptionChanges();
@@ -492,10 +494,12 @@ module.exports = function (app) {
       if (options.updateCorrectionTable) {
         if (wellUnderway) {
           updateTable();
-          // Save correction table periodically
+          // Save correction table periodically (skip if table is empty to avoid overwriting good data on disk)
           const now = new Date();
           if (now - lastSave > 60 * 1000) {
-            saveTable(table, path.join(app.getDataDirPath(), table.id + '.json'));
+            if (!isTableEmpty(table)) {
+              saveTable(table, path.join(app.getDataDirPath(), table.id + '.json'));
+            }
             lastSave = now;
           }
         } else {
@@ -510,6 +514,9 @@ module.exports = function (app) {
   plugin.stop = () => {
     return new Promise((resolve, reject) => {
       try {
+        if (table && !isTableEmpty(table)) {
+          saveTableSync(table, path.join(app.getDataDirPath(), table.id + '.json'));
+        }
         smoothedHeading = smoothedHeading?.terminate();
         smoothedAttitude = smoothedAttitude?.terminate();
         rawCurrent = rawCurrent?.terminate();
@@ -640,11 +647,25 @@ module.exports = function (app) {
    */
   function loadTable(options, filePath) {
     const stability = (options.stability !== undefined) ? options.stability : 6;
-    const fileData = Table2D.readFromFile(filePath);
+    let fileData = Table2D.readFromFile(filePath);
     let table;
     if (fileData) {
       table = CorrectionTable.fromJSON(fileData, stability);
       app.debug("Correction table loaded: " + (fileData.id || filePath));
+    } else if (fs.existsSync(filePath)) {
+      // File is present but could not be read — transient lock or parse error. Retry once.
+      app.error(`Correction table file exists but could not be read, retrying: ${filePath}`);
+      fileData = Table2D.readFromFile(filePath);
+      if (fileData) {
+        table = CorrectionTable.fromJSON(fileData, stability);
+        app.debug("Correction table loaded on retry: " + (fileData.id || filePath));
+      } else {
+        app.error(`Correction table retry failed — starting with empty table. Disk file preserved: ${filePath}`);
+        const name = options.tableName || 'correctionTable';
+        const row = { min: 0, max: SI.fromKnots(DEFAULT_DIMS.maxSpeed), step: SI.fromKnots(DEFAULT_DIMS.speedStep) };
+        const col = { min: -SI.fromDegrees(DEFAULT_DIMS.maxHeel), max: SI.fromDegrees(DEFAULT_DIMS.maxHeel), step: SI.fromDegrees(DEFAULT_DIMS.heelStep) };
+        table = new CorrectionTable(name, row, col, stability);
+      }
     } else {
       const name = options.tableName || 'correctionTable';
       const row = { min: 0, max: SI.fromKnots(DEFAULT_DIMS.maxSpeed), step: SI.fromKnots(DEFAULT_DIMS.speedStep) };
@@ -657,13 +678,35 @@ module.exports = function (app) {
   }
 
   /**
-   * Saves the correction table to disk as JSON.
+   * Saves the correction table to disk as JSON (async, via library).
    *
    * @param {CorrectionTable} correctionTable - The correction table instance to save.
    * @param {string} filePath - Absolute path of the target JSON file.
    */
   function saveTable(correctionTable, filePath) {
     correctionTable.saveToFile(filePath);
+  }
+
+  /**
+   * Saves the correction table synchronously. Used in stop() and when learning
+   * is toggled off, to ensure the write completes before the process can exit
+   * or the plugin be restarted.
+   */
+  function saveTableSync(correctionTable, filePath) {
+    try {
+      const data = JSON.stringify(correctionTable.toJSON(), null, 2);
+      fs.writeFileSync(filePath, data);
+    } catch (err) {
+      app.error(`Error saving correction table: ${err.message}`);
+    }
+  }
+
+  /**
+   * Returns true if every cell in the table has N === 0 (no learned data).
+   * Used to guard against overwriting a good on-disk file with an empty table.
+   */
+  function isTableEmpty(correctionTable) {
+    return correctionTable.table.every(row => row.every(cell => cell.N === 0));
   }
 
   /**
@@ -696,10 +739,29 @@ module.exports = function (app) {
           if (s) s.stalenessDetection = sdVal;
         }
         // noCurrent is always excluded from staleness detection
+      } else if (key === 'updateCorrectionTable') {
+        if (!value && table && !isTableEmpty(table)) {
+          // Learning switched off — persist current state before periodic saves stop
+          saveTableSync(table, path.join(app.getDataDirPath(), table.id + '.json'));
+          app.debug('Correction table saved: learning switched off');
+        } else if (value && table && isTableEmpty(table)) {
+          // Learning switched on and in-memory table is empty — reload from disk
+          // to recover from a failed load at startup
+          const filePath = path.join(app.getDataDirPath(), table.id + '.json');
+          const fileData = Table2D.readFromFile(filePath);
+          if (fileData) {
+            const reloaded = CorrectionTable.fromJSON(fileData, options.stability || 7);
+            reloaded.setDisplayAttributes({ label: reloaded.id });
+            if (!isTableEmpty(reloaded)) {
+              swapTable(reloaded);
+              app.debug('Correction table reloaded from disk: learning switched on (was empty in memory)');
+            }
+          }
+        }
       }
 
-      // All other keys (sogFallback, estimateBoatSpeed, updateCorrectionTable,
-      // assumeCurrent, stability, startWithNewTable, COGSource) are read
+      // All other keys (sogFallback, estimateBoatSpeed, assumeCurrent,
+      // stability, startWithNewTable, COGSource) are read
       // directly from options.* so no extra action needed.
 
       delete changedOptions[key];
