@@ -264,22 +264,14 @@ function _refreshMessage() {
 }
 
 // ─── Settings: paramMeta ──────────────────────────────────────────────────────
-// Each entry: { label, type, min?, max?, step?, default?, sourceOf? }
-// sourceOf: { type:'polar'|'delta'|'attitude', id }
-//   For polars: sources come from item.state.magnitude.sources
-//   For deltas/attitudes: sources come from item.state.sources
+// Each entry: { label, type, min?, max?, step?, default? }
 const paramMeta = {
   estimateBoatSpeed:     { label: 'Estimate boat speed',                  type: 'boolean' },
   updateCorrectionTable: { label: 'Update correction table',              type: 'boolean' },
   assumeCurrent:         { label: 'Assume current during update',         type: 'boolean', description: 'Experimental, works best when currents are relatively stable.' },
   sogFallback:           { label: 'Groundspeed fallback',                 type: 'boolean', description: 'Output Groundspeed as Boatspeed when the paddlewheel sensor is malfunctioning or stalled.' },
-  preventDuplication:    { label: 'Prevent speed duplication',            type: 'boolean', description: 'Replace the raw sensor boatspeed on the Signal K bus with the corrected value, preventing duplicate conflicting values.' },
   stability:             { label: 'Stability (1–20)',                     type: 'number', min: 1, max: 20, step: 1, default: 7, description: 'How quickly the correction table adapts to new observations. Higher values mean slower, more stable changes.' },
   showStatistics:        { label: 'Show statistics (σ)',                  type: 'boolean', description: 'Display standard deviation alongside smoothed values for debugging.' },
-  headingSource:  { label: 'Heading source',          type: 'source', sourceOf: { type: 'delta',   id: 'heading.smoothed'     } },
-  boatSpeedSource:{ label: 'Boat speed source',       type: 'source', sourceOf: { type: 'delta',   id: 'boatSpeed.smoothed'   } },
-  SOGSource:      { label: 'Groundspeed source',      type: 'source', sourceOf: { type: 'polar',   id: 'groundSpeed.smoothed' } },
-  attitudeSource: { label: 'Attitude source',         type: 'source', sourceOf: { type: 'attitude',id: 'attitude.smoothed'    } },
   smootherClass: {
     label: 'Smoother type', type: 'select',
     description: 'Smoothing applied to all sensor inputs for learning only.',
@@ -312,9 +304,8 @@ const paramMeta = {
 };
 
 // Settings groups for each UI section
-const INPUTS_SOURCE_KEYS      = ['headingSource','boatSpeedSource','SOGSource','attitudeSource'];
 const INPUTS_SETTING_KEYS     = ['stalenessDetection'];
-const ESTIMATION_SETTING_KEYS = ['sogFallback','preventDuplication'];
+const ESTIMATION_SETTING_KEYS = ['sogFallback'];
 const LEARNING_SETTING_KEYS   = ['stability','assumeCurrent','showStatistics'];
 const SMOOTHER_SETTING_KEYS   = [
   'smootherClass',
@@ -322,27 +313,6 @@ const SMOOTHER_SETTING_KEYS   = [
   { key: 'smootherTimeSpan',    showIf: cfg => (cfg.smootherClass || 'MovingAverageSmoother') === 'MovingAverageSmoother' },
   { key: 'smootherSteadyState', showIf: cfg => cfg.smootherClass === 'KalmanSmoother' },
 ];
-
-function getStateItem(sourceOf) {
-  if (!sourceOf) return null;
-  switch (sourceOf.type) {
-    case 'polar':    return state.polarsById[sourceOf.id];
-    case 'delta':    return state.deltasById[sourceOf.id];
-    case 'attitude': return state.attitudesById[sourceOf.id];
-    default:         return null;
-  }
-}
-
-function getSources(sourceOf) {
-  const item = getStateItem(sourceOf);
-  if (!item) return [];
-  if (sourceOf.type === 'polar') {
-    return Array.isArray(item.state?.magnitude?.sources) ? item.state.magnitude.sources : [];
-  }
-  return Array.isArray(item.state?.sources) ? item.state.sources
-       : Array.isArray(item.state?.angle?.sources) ? item.state.angle.sources
-       : [];
-}
 
 // Build one settings control for a key.
 function createSettingControl(key, meta, value) {
@@ -401,32 +371,6 @@ function createSettingControl(key, meta, value) {
     return sel;
   }
 
-  if (meta.type === 'source') {
-    if (meta.disabled) {
-      const inp = document.createElement('input');
-      inp.type = 'text'; inp.className = 'form-control form-control-sm';
-      inp.value = (value || '').trim(); inp.disabled = true; inp.style.opacity = '0.5';
-      return inp;
-    }
-    const sel = document.createElement('select');
-    sel.className = 'form-select form-select-sm d-inline-block';
-    sel.style.width = '200px';
-    const blank = document.createElement('option');
-    blank.value = ''; blank.textContent = '(any)';
-    sel.appendChild(blank);
-    const sources = meta.sourceOf ? getSources(meta.sourceOf) : [];
-    sources.forEach(src => {
-      const opt = document.createElement('option');
-      opt.value = src; opt.textContent = src;
-      sel.appendChild(opt);
-    });
-    sel.value = (value || '').trim();
-    sel.addEventListener('change', () => {
-      apiPutSettings({ [key]: sel.value || ' ' }).catch(e => showMessage(`Save failed: ${e.message}`));
-    });
-    return sel;
-  }
-
   // fallback: text input
   const inp = document.createElement('input');
   inp.type = 'text'; inp.className = 'form-control form-control-sm';
@@ -477,7 +421,6 @@ function renderSectionToggles() {
 
 function renderSettingsPanel() {
   if (!config) return;
-  renderSettingsRows('inputs-sources-table',      INPUTS_SOURCE_KEYS);
   renderSettingsRows('inputs-settings-table',     INPUTS_SETTING_KEYS);
   renderSettingsRows('estimation-settings-table', ESTIMATION_SETTING_KEYS);
   renderSettingsRows('smoother-settings-table',   SMOOTHER_SETTING_KEYS);

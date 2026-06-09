@@ -29,6 +29,20 @@ The plugin requires no further configuration in the Signal K admin UI. All setti
 
 ---
 
+## Configuring Signal K source priorities
+
+Signal K Server manages source priorities natively. When multiple devices publish the same path, the server delivers the highest-priority source to all subscribers — including this plugin. No per-path source selection is needed inside the plugin itself.
+
+When **Estimate Boat Speed** is enabled the plugin publishes corrected `navigation.speedThroughWater` alongside the raw paddle wheel value. Signal K will deliver whichever source has the higher priority. To ensure the rest of your instrument system sees the *corrected* value:
+
+1. Open the Signal K Server admin UI and navigate to **Server → Data Browser** (or the **Sources** page, depending on your server version).
+2. Locate `navigation.speedThroughWater` and find the source published by this plugin (it is identified as `SpeedAndCurrent`).
+3. Set that source to a higher priority than the raw paddle wheel source.
+
+Once configured, all consumers on the Signal K bus — KIP, OpenCPN, Instrument displays — receive the corrected value automatically without any further configuration.
+
+---
+
 ## Required Signal K paths
 
 | Path | Role |
@@ -84,10 +98,6 @@ The **Inputs** section shows live readings from the raw sensors as they arrive f
 | Ground speed | `navigation.speedOverGround` + `navigation.courseOverGroundTrue` |
 | Attitude (heel) | `navigation.attitude` (roll) |
 
-### Source selection
-
-For each path you can pin the plugin to a specific Signal K source. This is useful when multiple devices publish the same path — for example two GPS receivers, or a fluxgate and a satellite compass both publishing `navigation.headingTrue`. Leave a source blank or select **(any)** to accept values from all sources. This is independent of the Signal K server's global source priority settings.
-
 ### Settings
 
 | Setting | Default | Description |
@@ -120,7 +130,6 @@ The panel is organised into three groups:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | **Estimate Boat Speed** | Off | Master toggle. Apply the correction table and publish corrected STW, leeway, and current. Turn on once the table has reasonable coverage. |
-| **Prevent Speed Duplication** | On | Replace the raw sensor value on the SK bus with the corrected value. When off, both raw and corrected exist under `navigation.speedThroughWater` with different source attributes — useful for comparing before and after. |
 | **Groundspeed Fallback** | Off | When the paddle wheel reads zero and SOG is above a minimum threshold, publish SOG as boatspeed. Primarily intended for clogged or stuck paddle wheels where the instrument is physically present but not turning — giving the rest of the instrument system a usable boat speed until the wheel is cleared. |
 
 ---
@@ -227,40 +236,40 @@ When a new paddle wheel sample arrives the plugin:
 
 Rather than bi-linear interpolation the plugin uses **inverse-distance weighting** over the five nearest cells in speed/heel space:
 
-$$w_i = \frac{1}{d_i + \epsilon}$$
+> wᵢ = 1 / (dᵢ + ε)
 
-where $d_i$ is the Euclidean distance from the query point to cell centre $i$ in normalised speed/heel space. Only cells that have received at least one observation ($N > 0$) contribute.
+where dᵢ is the Euclidean distance from the query point to cell centre i in normalised speed/heel space. Only cells that have received at least one observation (N > 0) contribute.
 
 The final correction is the normalised weighted average:
 
-$$\hat{x} = \frac{\sum_i w_i \cdot x_i}{\sum_i w_i}, \quad \hat{y} = \frac{\sum_i w_i \cdot y_i}{\sum_i w_i}$$
+> x̂ = Σ(wᵢ · xᵢ) / Σwᵢ,  ŷ = Σ(wᵢ · yᵢ) / Σwᵢ
 
 The variance of each axis is propagated through the same weighting, so cells with low confidence (high covariance) influence the result less. If only one or two cells have data, the correction extrapolates gradually to nearby conditions. As more cells fill in, the correction becomes tighter and more local.
 
 ### How the correction table is populated
 
-Each cell is an independent **2-dimensional Kalman filter** tracking the correction vector $[x, y]$ for that speed/heel bin, with a 2×2 covariance matrix expressing confidence in each axis.
+Each cell is an independent **2-dimensional Kalman filter** tracking the correction vector [x, y] for that speed/heel bin, with a 2×2 covariance matrix expressing confidence in each axis.
 
 Every time conditions are right — plugin running for >60 seconds, smoothers settled, speed above minimum threshold — the plugin computes an **observation** of what the correction should be:
 
-$$\text{observation} = R(\psi)^{-1} \cdot \vec{V}_{SOG} - R(\psi)^{-1} \cdot \vec{V}_{current} - \vec{V}_{STW}$$
+> observation = R(ψ)⁻¹ · V_SOG − R(ψ)⁻¹ · V_current − V_STW
 
-where $R(\psi)$ rotates from ground frame to boat frame using true heading $\psi$. In plain terms: rotate GPS velocity into the boat frame, subtract the current estimate (also rotated), subtract the raw paddle wheel velocity. The residual is the implied sensor error for the current speed and heel.
+where R(ψ) rotates from ground frame to boat frame using true heading ψ. In plain terms: rotate GPS velocity into the boat frame, subtract the current estimate (also rotated), subtract the raw paddle wheel velocity. The residual is the implied sensor error for the current speed and heel.
 
 The Kalman update combines this observation with the cell's existing belief:
 
-$$K = P \cdot (P + R_{obs})^{-1}$$
-$$x_{new} = x_{old} + K \cdot (\text{observation} - x_{old})$$
+> K = P · (P + R_obs)⁻¹
+> x_new = x_old + K · (observation − x_old)
 
-where $P$ is the cell's current covariance and $R_{obs}$ is the observation covariance derived from the measurement uncertainty of all contributing signals (SOG variance + current variance + STW variance, rotated appropriately). **Noisy observations produce a smaller gain and move the cell estimate less.**
+where P is the cell's current covariance and R_obs is the observation covariance derived from the measurement uncertainty of all contributing signals (SOG variance + current variance + STW variance, rotated appropriately). **Noisy observations produce a smaller gain and move the cell estimate less.**
 
 ### The stability setting in detail
 
 Each cell has a small **process noise** that allows it to drift slowly over time, reflecting that a paddle wheel's error can change with fouling, recalibration, or crew weight distribution. Process noise is:
 
-$$Q = 10^{-\text{stability}}$$
+> Q = 10^(−stability)
 
-With stability = 7 (default), $Q = 10^{-7}$, making the cell very resistant to change — it effectively averages hundreds of observations before settling. Stability 4–5 makes the table react faster to recent conditions; stability 10–12 is appropriate for a well-characterised boat that changes rarely.
+With stability = 7 (default), Q = 10⁻⁷, making the cell very resistant to change — it effectively averages hundreds of observations before settling. Stability 4–5 makes the table react faster to recent conditions; stability 10–12 is appropriate for a well-characterised boat that changes rarely.
 
 In practical terms: high stability = trust the accumulated history; low stability = trust recent observations more.
 
@@ -268,11 +277,11 @@ In practical terms: high stability = trust the accumulated history; low stabilit
 
 Current is estimated as:
 
-$$\vec{V}_{current} = \vec{V}_{SOG} - R(\psi) \cdot \vec{V}_{STW, corrected}$$
+> V_current = V_SOG − R(ψ) · V_STW_corrected
 
 The corrected STW vector is rotated into the ground frame using heading, then subtracted from the GPS velocity. The residual is the water velocity.
 
-This raw estimate is fed into a **Kalman smoother with very low process noise** (process variance $\approx 10^{-6}$), so it changes very slowly, integrating over many minutes rather than chasing individual GPS fluctuations. At startup the estimate is strongly initialised to zero.
+This raw estimate is fed into a **Kalman smoother with very low process noise** (process variance ≈ 10⁻⁶), so it changes very slowly, integrating over many minutes rather than chasing individual GPS fluctuations. At startup the estimate is strongly initialised to zero.
 
 Current estimation requires an accurate boat speed, so it is gated by the 60-second stabilisation period and only runs when **Estimate Boat Speed** is enabled.
 

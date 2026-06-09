@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
+## [2.0.0] - 2026-6-3
+### Changed
+- **Breaking:** Requires `signalkutilities` v2.0.0. Source-selection and pass-through machinery has been removed from the library; Signal K Server now handles source priorities natively.
+- Per-path source settings (`headingSource`, `boatSpeedSource`, `SOGSource`, `attitudeSource`) have been removed. Use Signal K Server's built-in source priority configuration instead.
+- The **Prevent Speed Duplication** setting has been removed. The server's `excludeSelf` behaviour and source priorities replace it.
+
+### Removed
+- Source dropdowns in the webapp Inputs section.
+- Source-related fields from persisted plugin configuration. A one-time migration strips these fields automatically on first start with the new version.
+
+### Added
+- Documentation explaining how to configure Signal K source priorities so that the corrected `navigation.speedThroughWater` is delivered to all consumers.
+
 ## [1.7.10] - 2026-5-14
 ### Fixed
 - Removed incorrect `self.` prefix from Signal K paths.

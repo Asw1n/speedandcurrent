@@ -31,12 +31,8 @@ module.exports = function (app) {
     updateCorrectionTable: true,
     stability: 7,
     assumeCurrent: false,
-    headingSource: ' ',
-    boatSpeedSource: ' ',
-    SOGSource: ' ',
-    attitudeSource: ' ',
-    preventDuplication: true,
     tableName: 'correctionTable',
+    configVersion: 2,
     smootherClass: 'MovingAverageSmoother',
     smootherTau: 3,
     smootherTimeSpan: 5,
@@ -66,9 +62,19 @@ module.exports = function (app) {
     saveOptions();
   }
 
-  // only allow prevent duplication when correctedBoatSpeed is enabled, otherwise it would prevent any boat speed from being published at all
-  const preventDuplication = () => {
-    return options.preventDuplication && options.estimateBoatSpeed;
+  /**
+   * Strips obsolete source-selection fields from the persisted config and
+   * writes it back if anything changed. Called once on every start().
+   */
+  function migrateConfig() {
+    const obsoleteKeys = ['headingSource', 'boatSpeedSource', 'SOGSource', 'attitudeSource', 'preventDuplication'];
+    const hadObsolete = obsoleteKeys.some(k => k in options);
+    for (const k of obsoleteKeys) delete options[k];
+    if (hadObsolete || (options.configVersion || 0) < 2) {
+      options.configVersion = 2;
+      saveOptions();
+      app.debug('Config migrated to v2: removed obsolete source-selection fields');
+    }
   }
 
   /**
@@ -298,6 +304,7 @@ module.exports = function (app) {
     setStatus('Starting');
     app.debug("Starting");
     readOptions(); // pick up any saves since registerWithRouter ran
+    migrateConfig(); // strip obsolete fields from persisted config
     const tableName = options.tableName || 'correctionTable';
     const tableFilePath = path.join(app.getDataDirPath(), tableName + '.json');
     table = loadTable(options, tableFilePath);
@@ -308,8 +315,6 @@ module.exports = function (app) {
 
     // heading
     smoothedHeading = new SmoothedAngle(app, plugin.id, 'heading', 'navigation.headingTrue', {
-      source: options.headingSource,
-      passOn: true,
       angleRange: '0to2pi',
       meta: { displayName: 'Heading', plane: 'Ground' },
       SmootherClass,
@@ -326,8 +331,6 @@ module.exports = function (app) {
       app, pluginId: plugin.id,
       id: 'attitude',
       path: 'navigation.attitude',
-      source: options.attitudeSource,
-      passOn: true,
       subscribe: true,
       SmootherClass,
       smootherOptions
@@ -381,8 +384,6 @@ module.exports = function (app) {
       app, pluginId: plugin.id,
       id: 'boatSpeed',
       path: 'navigation.speedThroughWater',
-      source: options.boatSpeedSource,
-      passOn: !preventDuplication(),
       subscribe: true,
       SmootherClass,
       smootherOptions
@@ -413,8 +414,6 @@ module.exports = function (app) {
       id: 'groundSpeed',
       pathMagnitude: 'navigation.speedOverGround',
       pathAngle: 'navigation.courseOverGroundTrue',
-      source: options.SOGSource,
-      passOn: true,
       angleRange: '0to2pi',
       meta: { displayName: 'Groundspeed', plane: 'Ground' },
       SmootherClass,
@@ -711,8 +710,7 @@ module.exports = function (app) {
 
   /**
    * Drains changedOptions into options and hot-applies each change where possible.
-   * Source changes are applied in-place on existing handlers; flag changes take
-   * effect immediately since onChange reads from options.* directly.
+   * Flag changes take effect immediately since onChange reads from options.* directly.
    */
   function applyOptionChanges() {
     const changedKeys = Object.keys(changedOptions);
@@ -720,20 +718,7 @@ module.exports = function (app) {
       const value = changedOptions[key];
       options[key] = value;
 
-      // Hot-apply source changes by mutating handler references in-place
-      if (smoothedHeading && key === 'headingSource') {
-        smoothedHeading.handler.source = value;
-      } else if (smoothedAttitude && key === 'attitudeSource') {
-        smoothedAttitude.handler.source = value;
-      } else if (smoothedBoatSpeed && key === 'boatSpeedSource') {
-        smoothedBoatSpeed.handler.source = value;
-      } else if (smoothedGroundSpeed && key === 'SOGSource') {
-        smoothedGroundSpeed.polar.magnitudeHandler.source = value;
-      } else if (key === 'preventDuplication') {
-        if (smoothedBoatSpeed) smoothedBoatSpeed.handler.passOn = !preventDuplication();
-      } else if (key === 'estimateBoatSpeed' ) {
-        if (smoothedBoatSpeed) smoothedBoatSpeed.handler.passOn = !preventDuplication();
-      } else if (key === 'stalenessDetection') {
+      if (key === 'stalenessDetection') {
         const sdVal = Boolean(value);
         for (const s of [smoothedHeading, smoothedAttitude, smoothedBoatSpeed, smoothedGroundSpeed, smoothedCurrent, smoothedResidual]) {
           if (s) s.stalenessDetection = sdVal;
@@ -761,7 +746,7 @@ module.exports = function (app) {
       }
 
       // All other keys (sogFallback, estimateBoatSpeed, assumeCurrent,
-      // stability, startWithNewTable, COGSource) are read
+      // stability, smootherClass, etc.) are read
       // directly from options.* so no extra action needed.
 
       delete changedOptions[key];
