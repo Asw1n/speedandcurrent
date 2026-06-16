@@ -17,16 +17,17 @@
   },
   "homepage": "https://github.com/Asw1n/speedandcurrent#readme",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.0.0"
   },
   "keywords": [
     "signalk-webapp",
     "signalk-node-server-plugin",
-    "signalk-category-utility"
+    "signalk-category-utility",
+    "signalk-category-instruments"
   ],
   "signalk-plugin-enabled-by-default": false,
   "signalk": {
-    "appIcon": "./public/icon.png",
+    "appIcon": "./icon.png",
     "displayName": "Speed and current",
     "screenshots": [
       "./docs/correctionTable.png",

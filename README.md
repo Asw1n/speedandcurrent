@@ -108,7 +108,7 @@ The **Inputs** section shows live readings from the raw sensors as they arrive f
 
 ## Boatspeed Estimation
 
-The **Boatspeed Estimation** section is enabled with the toggle in the panel header. When off, no corrected output is published; the raw paddle wheel value passes through to the SK bus unchanged (subject to the Prevent Speed Duplication setting).
+The **Boatspeed Estimation** section is enabled with the toggle in the panel header. When off, no corrected output is published; the raw paddle wheel value passes through to the SK bus unchanged.
 
 ### What it shows
 

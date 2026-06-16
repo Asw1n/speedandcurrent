@@ -1,6 +1,21 @@
 const { Table2D} = require('signalkutilities');
 const { KalmanFilter, State } = require('kalman-filter');
 
+// Module-level helpers — avoids creating new Function objects on every Kalman update call
+function _rotateValue(cos, sin, vector) {
+  return [
+     cos * vector[0] + sin * vector[1],
+    -sin * vector[0] + cos * vector[1]
+  ];
+}
+
+function _rotateVariance(cos, sin, vector) {
+  return [
+    [vector[0] * cos ** 2 + vector[1] * sin ** 2, (vector[0] - vector[1]) * cos * sin],
+    [(vector[0] - vector[1]) * cos * sin,          vector[0] * sin ** 2 + vector[1] * cos ** 2]
+  ];
+}
+
 class CorrectionTable extends Table2D{
   /**
    * Represents a 2D correction table for heel and speed.
@@ -114,18 +129,21 @@ class CorrectionTable extends Table2D{
         totalWeight += weight;
       }
     }
-    for (const neighbour of this.neighbours) {
-      if (totalWeight > 0) neighbour.normWeight /= totalWeight;
+    if (totalWeight > 0) {
+      for (const neighbour of this.neighbours) {
+        neighbour.normWeight /= totalWeight;
+      }
     }
 
-    const corrAndVar = { correction: { x, y }, variance: { x: varX, y: varY } };
-    if (totalWeight === 0) return corrAndVar;
+    if (totalWeight === 0) return { correction: { x: 0, y: 0 }, variance: { x: 0, y: 0 } };
 
     // Compute the final correction and variance
+    // Variance of a weighted mean: Σ(w²·var_i) / (Σw)²
+    const tw2 = totalWeight * totalWeight;
     x /= totalWeight;
     y /= totalWeight;
-    varX /= totalWeight;
-    varY /= totalWeight;
+    varX /= tw2;
+    varY /= tw2;
     this.totalWeight = totalWeight;
 
     return { correction: { x, y }, variance: { x: varX, y: varY } };
@@ -136,11 +154,11 @@ class CorrectionTable extends Table2D{
       id: this.id,
       row: { min: this.min[0], max: this.max[0], step: this.step[0] },
       col: { min: this.min[1], max: this.max[1], step: this.step[1] },
-      table: this.table.map(row =>
-        row.map((correction, colIndex, rowArray) => {
+      table: this.table.map((row, rowIndex) =>
+        row.map((correction, colIndex) => {
           const cellReport = correction.report();
           // Derive the bin coordinates from indices
-          const speedBin = this.min[0] + this.step[0] * this.table.indexOf(rowArray); // row axis represents speed
+          const speedBin = this.min[0] + this.step[0] * rowIndex; // row axis represents speed
           const heelBin = this.min[1] + this.step[1] * colIndex; // col axis represents heel
           // Compute forward speed after longitudinal correction
           const forward = speedBin + cellReport.x;
@@ -151,14 +169,10 @@ class CorrectionTable extends Table2D{
           // Trace ( cov_xx + cov_yy ) when covariance available and N>0
           let trace = null;
           if (cellReport.N > 0) {
-            try {
-              const cov = correction.covariance;
-              if (cov && Array.isArray(cov) && cov[0] && cov[1] && Number.isFinite(cov[0][0]) && Number.isFinite(cov[1][1])) {
-                const a = cov[0][0];
-                const d = cov[1][1];
-                trace = a + d;
-              }
-            } catch { /* silent */ }
+            const cov = correction.covariance;
+            if (cov && Array.isArray(cov) && cov[0] && cov[1] && Number.isFinite(cov[0][0]) && Number.isFinite(cov[1][1])) {
+              trace = cov[0][0] + cov[1][1];
+            }
           }
           cellReport.forward = forward;
           cellReport.factor = factor;
@@ -229,22 +243,8 @@ class CorrectionEstimator {
     const cosTheta = Math.cos(heading);
     const sinTheta = Math.sin(heading);
 
-    const rotateValue = (vector) => ([
-      cosTheta * vector[0] + sinTheta * vector[1],
-      -sinTheta * vector[0] + cosTheta * vector[1]]
-    );
-
-    const rotateVariance = (vector) => (
-      [
-        [vector[0] * cosTheta ** 2 + vector[1] * sinTheta ** 2,
-        (vector[0] - vector[1]) * cosTheta * sinTheta],
-        [(vector[0] - vector[1]) * cosTheta * sinTheta,
-        vector[0] * sinTheta ** 2 + vector[1] * cosTheta ** 2]
-      ]
-    );
-
-    var groundVector = rotateValue(groundSpeed.vector);
-    var currentVector = rotateValue(current.vector);
+    var groundVector = _rotateValue(cosTheta, sinTheta, groundSpeed.vector);
+    var currentVector = _rotateValue(cosTheta, sinTheta, current.vector);
     var boatVector = boatSpeed.vector;
 
     const observation = [
@@ -252,8 +252,8 @@ class CorrectionEstimator {
       -boatVector[1] + groundVector[1] - currentVector[1]
     ];
 
-    var groundCov = rotateVariance(groundSpeed.variance);
-    var currentCov = rotateVariance(current.variance);
+    var groundCov = _rotateVariance(cosTheta, sinTheta, groundSpeed.variance);
+    var currentCov = _rotateVariance(cosTheta, sinTheta, current.variance);
     var boatCov = [[boatSpeed.xVariance, 0], [0, boatSpeed.yVariance]];
 
     const observationCovariance = [[

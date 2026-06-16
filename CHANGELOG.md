@@ -4,8 +4,10 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
-## [2.0.0] - 2026-6-3
+## [2.0.0] - 2026-6-17
 ### Changed
+- Moving average smoother is now O(1) in both CPU and memory: it no longer slows down or uses more memory as the window size grows.
+
 - **Breaking:** Requires `signalkutilities` v2.0.0. Source-selection and pass-through machinery has been removed from the library; Signal K Server now handles source priorities natively.
 - Per-path source settings (`headingSource`, `boatSpeedSource`, `SOGSource`, `attitudeSource`) have been removed. Use Signal K Server's built-in source priority configuration instead.
 - The **Prevent Speed Duplication** setting has been removed. The server's `excludeSelf` behaviour and source priorities replace it.
@@ -16,6 +18,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 - Documentation explaining how to configure Signal K source priorities so that the corrected `navigation.speedThroughWater` is delivered to all consumers.
+
+### Fixed
+- Correction table reporting was doing unnecessary work on every update, causing higher CPU use especially on low-power hardware such as a Raspberry Pi.
+- The variance values used for interpolating between correction table cells were calculated with an incorrect formula, causing them to be overestimated. This made the Kalman outlier gate slightly less accurate.
 
 ## [1.7.10] - 2026-5-14
 ### Fixed

@@ -25,6 +25,7 @@ module.exports = function (app) {
 
   let options = {};
   let changedOptions = {};
+  let hasPendingChanges = false;
   const defaultOptions = {
     sogFallback: true,
     estimateBoatSpeed: false,
@@ -111,7 +112,7 @@ module.exports = function (app) {
     table = newTable;
     minSpeed = table.step[0] / 2;
     if (reportFull) reportFull.setTables([table]);
-    lastSave = new Date(); // explicit table operations already save; defer next periodic save
+    lastSave = Date.now(); // explicit table operations already save; defer next periodic save
   }
 
   let isRunning = false;
@@ -196,6 +197,7 @@ module.exports = function (app) {
         }
       }
       changedOptions = { ...changedOptions, ...body };
+      hasPendingChanges = true;
       res.json({ ...options, ...changedOptions });
     });
 
@@ -477,7 +479,7 @@ module.exports = function (app) {
     }
 
     isRunning = true;
-    started = new Date();
+    started = Date.now();
     lastSave = 0;
     setStatus('Running');
     app.debug("Running");
@@ -494,8 +496,8 @@ module.exports = function (app) {
         if (wellUnderway) {
           updateTable();
           // Save correction table periodically (skip if table is empty to avoid overwriting good data on disk)
-          const now = new Date();
-          if (now - lastSave > 60 * 1000) {
+          const now = Date.now();
+          if (now - lastSave > 60_000) {
             if (!isTableEmpty(table)) {
               saveTable(table, path.join(app.getDataDirPath(), table.id + '.json'));
             }
@@ -763,6 +765,7 @@ module.exports = function (app) {
       if (smoothedAttitude) { smoothedAttitude.setSmootherClass(SC); smoothedAttitude.setSmootherOptions(so); }
     }
 
+    hasPendingChanges = false;
     saveOptions();
   }
 
