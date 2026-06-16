@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
+## [2.0.1] - 2026-6-17
+### Fixed
+- Correction table reporting was doing unnecessary work on every update, causing higher CPU use especially on low-power hardware such as a Raspberry Pi.
+- The variance values used for interpolating between correction table cells were calculated with an incorrect formula, causing them to be overestimated. This made the Kalman outlier gate slightly less accurate.
+
 ## [2.0.0] - 2026-6-17
 ### Changed
 - Moving average smoother is now O(1) in both CPU and memory: it no longer slows down or uses more memory as the window size grows.
@@ -18,10 +23,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 - Documentation explaining how to configure Signal K source priorities so that the corrected `navigation.speedThroughWater` is delivered to all consumers.
-
-### Fixed
-- Correction table reporting was doing unnecessary work on every update, causing higher CPU use especially on low-power hardware such as a Raspberry Pi.
-- The variance values used for interpolating between correction table cells were calculated with an incorrect formula, causing them to be overestimated. This made the Kalman outlier gate slightly less accurate.
 
 ## [1.7.10] - 2026-5-14
 ### Fixed
