@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
+## [2.0.2] - 2026-6-18
+### Fixed
+- The plugin icon was not displayed in the Signal K App Store because the icon path in the package metadata was incorrect.
+- Test files are no longer included in the published npm package.
+
 ## [2.0.1] - 2026-6-17
 ### Fixed
 - Correction table reporting was doing unnecessary work on every update, causing higher CPU use especially on low-power hardware such as a Raspberry Pi.

@@ -1,6 +1,6 @@
 {
   "name": "speedandcurrent",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "A plugin that automatically corrects boat speed and calculates current and leeway using sensor fusion.",
   "main": "index.js",
   "scripts": {
@@ -17,7 +17,8 @@
   },
   "homepage": "https://github.com/Asw1n/speedandcurrent#readme",
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.0.0",
+    "signalk-server": ">=2.28.0"
   },
   "keywords": [
     "signalk-webapp",
@@ -37,13 +38,12 @@
   },
   "dependencies": {
     "kalman-filter": "^2.3.0",
-    "signalkutilities": "^2.0.0"
+    "signalkutilities": "^2.0.1"
   },
   "files": [
     "index.js",
     "correctionTable.js",
     "public/",
-    "docs/",
-    "test"
+    "docs/"
   ]
 }
