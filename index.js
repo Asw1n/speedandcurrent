@@ -755,6 +755,7 @@ module.exports = function (app) {
       // directly from options.* so no extra action needed.
       if (key === 'estimateBoatSpeed' && !value && correctedBoatSpeed) {
         Polar.clear(app, plugin.id, [correctedBoatSpeed]);
+        PolarSmoother.clear(app, plugin.id, [smoothedCurrent]);
       }
 
       delete changedOptions[key];
