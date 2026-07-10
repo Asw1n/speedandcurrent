@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
+## [2.1.0] - 2026-07-10
+
+### Added
+- `null` is written to corrected boat speed (`navigation.speedThroughWater`, `navigation.leewayAngle`) and current (`environment.current.drift`, `environment.current.setTrue`) paths when `estimateBoatSpeed` is toggled off.
+- `null` is written to all active output paths (current, corrected boat speed) when the plugin stops, preventing stale values on the SK bus.
+
 ## [2.0.2] - 2026-6-18
 ### Fixed
 - The plugin icon was not displayed in the Signal K App Store because the icon path in the package metadata was incorrect.
