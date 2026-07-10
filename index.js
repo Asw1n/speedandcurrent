@@ -518,6 +518,9 @@ module.exports = function (app) {
         if (table && !isTableEmpty(table)) {
           saveTableSync(table, path.join(app.getDataDirPath(), table.id + '.json'));
         }
+        // Clear all active output paths from the SK bus before teardown.
+        if (smoothedCurrent) PolarSmoother.clear(app, plugin.id, [smoothedCurrent]);
+        if (options.estimateBoatSpeed && correctedBoatSpeed) Polar.clear(app, plugin.id, [correctedBoatSpeed]);
         smoothedHeading = smoothedHeading?.terminate();
         smoothedAttitude = smoothedAttitude?.terminate();
         rawCurrent = rawCurrent?.terminate();
@@ -750,6 +753,9 @@ module.exports = function (app) {
       // All other keys (sogFallback, estimateBoatSpeed, assumeCurrent,
       // stability, smootherClass, etc.) are read
       // directly from options.* so no extra action needed.
+      if (key === 'estimateBoatSpeed' && !value && correctedBoatSpeed) {
+        Polar.clear(app, plugin.id, [correctedBoatSpeed]);
+      }
 
       delete changedOptions[key];
     }
