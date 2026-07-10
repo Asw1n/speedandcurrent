@@ -105,7 +105,7 @@ Follow the CoreUI 2.x layout exactly. This is the structure SignalK itself uses:
         <img src="icon.png" alt="My Plugin" style="height:32px;width:auto;">
         <span class="app-title">My Plugin</span>
       </a>
-      <button class="navbar-toggler sidebar-toggler d-md-down-none ms-2" type="button" id="sidebarToggler">
+      <button class="navbar-toggler sidebar-toggler ms-2" type="button" id="sidebarToggler">
         <span class="navbar-toggler-icon"></span>
       </button>
     </div>
@@ -135,8 +135,19 @@ Follow the CoreUI 2.x layout exactly. This is the structure SignalK itself uses:
       document.body.classList.toggle('sidebar-minimized');
       document.body.classList.toggle('brand-minimized');
     });
+    // On mobile (<768px) the sidebar is off-canvas; reveal it with sidebar-mobile-show.
+    // On desktop the sidebar is always visible; sidebar-hidden collapses it to icon-width.
+    const isMobile = () => window.matchMedia('(max-width: 767.98px)').matches;
     document.getElementById('sidebarToggler').addEventListener('click', () => {
-      document.body.classList.toggle('sidebar-hidden');
+      if (isMobile()) {
+        document.body.classList.toggle('sidebar-mobile-show');
+      } else {
+        document.body.classList.toggle('sidebar-hidden');
+      }
+    });
+    // Auto-close sidebar on mobile when a nav item is selected.
+    document.getElementById('my-nav').addEventListener('click', () => {
+      if (isMobile()) document.body.classList.remove('sidebar-mobile-show');
     });
   </script>
 
@@ -146,6 +157,8 @@ Follow the CoreUI 2.x layout exactly. This is the structure SignalK itself uses:
 **Key points:**
 - Do **not** put `navbar-brand` on the `<a>` wrapping your logo — CoreUI injects the SignalK logo image and "Signal K" text as a background/pseudo-element on `.app-header .navbar-brand`. Use `app-title` on just the text `<span>` instead.
 - The sidebar minimizer button (`sidebar-minimizer`) is purely CSS-driven. Toggling `sidebar-minimized` and `brand-minimized` on `<body>` is all that's needed — no CoreUI JS required.
+- Do **not** add `d-md-down-none` to the sidebar toggler button. That class hides the button below 768px, which is exactly where it is needed most. The toggler must be visible at all viewport widths.
+- Below 768px the sidebar is off-canvas by default. Use `sidebar-mobile-show` on `<body>` to reveal it (not `sidebar-hidden`, which only affects the desktop collapsed state). Branch on `window.matchMedia('(max-width: 767.98px)')` in the click handler.
 
 ---
 
@@ -346,3 +359,4 @@ Do **not** add layout rules for `body`, navbar, sidebar, cards or form controls 
 | Enable toggle pushes card header taller | Switch widget has natural height greater than text line height | Use `position: absolute` on the toggle container so it is out of layout flow |
 | Table value column jumps between scenes | Browser sizes columns from content without `table-layout: fixed` | Set `table-layout: fixed` and explicit `width` on both `td` columns |
 | Sidebar not collapsing | Missing toggle JS or wrong body classes | Toggle `sidebar-minimized` + `brand-minimized` on `<body>` via JS; no CoreUI JS bundle needed |
+| Sidebar unreachable on mobile | `d-md-down-none` on the toggler hides it below 768px; `sidebar-hidden` does not reveal the sidebar at that breakpoint | Remove `d-md-down-none`; use `sidebar-mobile-show` on `<body>` when `matchMedia('(max-width: 767.98px)')` matches, `sidebar-hidden` otherwise |
