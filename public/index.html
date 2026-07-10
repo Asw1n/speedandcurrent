@@ -54,7 +54,7 @@
         <img src="icon.png" alt="" style="height:48px;width:auto">
         <span class="app-title">Speed &amp; Current</span>
       </a>
-      <button class="navbar-toggler sidebar-toggler d-md-down-none ms-2" type="button" id="sidebarToggler">
+      <button class="navbar-toggler sidebar-toggler ms-2" type="button" id="sidebarToggler">
         <span class="navbar-toggler-icon"></span>
       </button>
     </div>
@@ -214,8 +214,13 @@
       document.body.classList.toggle('sidebar-minimized');
       document.body.classList.toggle('brand-minimized');
     });
+    const isMobile = () => window.matchMedia('(max-width: 767.98px)').matches;
     document.getElementById('sidebarToggler').addEventListener('click', () => {
-      document.body.classList.toggle('sidebar-hidden');
+      if (isMobile()) {
+        document.body.classList.toggle('sidebar-mobile-show');
+      } else {
+        document.body.classList.toggle('sidebar-hidden');
+      }
     });
     document.querySelectorAll('#main-nav .nav-link').forEach(link => {
       link.addEventListener('click', e => {
@@ -225,6 +230,7 @@
         const target = link.dataset.section;
         document.querySelectorAll('.app-section').forEach(s => s.style.display = 'none');
         document.getElementById('section-' + target).style.display = '';
+        if (isMobile()) document.body.classList.remove('sidebar-mobile-show');
       });
     });
   </script>
