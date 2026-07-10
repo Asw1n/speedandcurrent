@@ -38,7 +38,7 @@
   },
   "dependencies": {
     "kalman-filter": "^2.3.0",
-    "signalkutilities": "^2.0.1"
+    "signalkutilities": "^2.1.0"
   },
   "files": [
     "index.js",
