@@ -28,7 +28,7 @@
   ],
   "signalk-plugin-enabled-by-default": false,
   "signalk": {
-    "appIcon": "./icon.png",
+    "appIcon": "./public/icon.png",
     "displayName": "Speed and current",
     "screenshots": [
       "./docs/correctionTable.png",
