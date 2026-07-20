@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
+## [Unreleased]
+
+### Fixed
+- `signalk.appIcon` path corrected to `./public/icon.png` so the App Store CDN resolves the icon from the npm tarball instead of showing the monogram fallback.
+
 ## [2.1.1] - 2026-07-20
 
 ### Fixed
