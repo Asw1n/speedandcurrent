@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ### Fixed
-- `signalk.appIcon` path corrected to `./public/icon.png` so the App Store CDN resolves the icon from the npm tarball instead of showing the monogram fallback.
+- App Store icon was missing (monogram fallback shown): added `icon.png` at the package root so the App Store CDN can fetch it from the npm tarball via unpkg.com. The runtime `signalk.appIcon: ./icon.png` path is unchanged - the server still serves it from `public/icon.png` via the webapp mount.
 
 ## [2.1.1] - 2026-07-20
 
