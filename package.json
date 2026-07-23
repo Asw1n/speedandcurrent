@@ -38,7 +38,7 @@
   },
   "dependencies": {
     "kalman-filter": "^2.3.0",
-    "signalkutilities": "^3.0.0"
+    "signalkutilities": "^3.0.1"
   },
   "files": [
     "icon.png",
