@@ -4,10 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
-## [Unreleased]
+## [2.1.2] - 2026-07-23
 
 ### Fixed
 - App Store icon was missing (monogram fallback shown): added `icon.png` at the package root so the App Store CDN can fetch it from the npm tarball via unpkg.com. The runtime `signalk.appIcon: ./icon.png` path is unchanged - the server still serves it from `public/icon.png` via the webapp mount.
+- Updated `signalkutilities` to 3.0.1, fixing continuous 401 log flooding on SK servers with security enabled and anonymous read access disabled.
 
 ## [2.1.1] - 2026-07-20
 
