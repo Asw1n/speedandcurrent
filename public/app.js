@@ -97,6 +97,7 @@ function normaliseState(data) {
 
 // ─── Static meta (fetched once at startup from /api/meta) ─────────────────────
 let metaById = {}; // keyed by item id
+let lifecycleWarnings = [];
 
 async function loadMeta() {
   const data = await apiGet('/api/meta');
@@ -177,6 +178,29 @@ function renderWarnings(elId, ids) {
     const label = metaById[id]?.displayName ?? id;
     const li = document.createElement('li');
     li.textContent = `"${label}" — ${getNotReadyReason(item)}`;
+    ul.appendChild(li);
+  });
+  el.appendChild(ul);
+}
+
+function renderInputWarnings(elId, ids) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.innerHTML = '';
+  const lines = [];
+  lifecycleWarnings.forEach(w => {
+    if (w && typeof w.message === 'string') lines.push(w.message);
+  });
+  if (lines.length === 0) return;
+  const h = document.createElement('h6');
+  h.className = 'text-uppercase fw-bold text-muted border-bottom pb-1 mt-3 mb-1 small';
+  h.textContent = 'Warnings';
+  el.appendChild(h);
+  const ul = document.createElement('ul');
+  ul.className = 'list-unstyled text-danger small ps-3';
+  lines.forEach(line => {
+    const li = document.createElement('li');
+    li.textContent = line;
     ul.appendChild(li);
   });
   el.appendChild(ul);
@@ -299,7 +323,12 @@ const paramMeta = {
 };
 
 // Settings groups for each UI section
-const INPUTS_SETTING_KEYS     = [];
+const INPUTS_SETTING_KEYS     = [
+  'smootherClass',
+  { key: 'smootherTau',         showIf: cfg => cfg.smootherClass === 'ExponentialSmoother' },
+  { key: 'smootherTimeSpan',    showIf: cfg => (cfg.smootherClass || 'MovingAverageSmoother') === 'MovingAverageSmoother' },
+  { key: 'smootherSteadyState', showIf: cfg => cfg.smootherClass === 'KalmanSmoother' },
+];
 const ESTIMATION_SETTING_KEYS = ['sogFallback'];
 const LEARNING_SETTING_KEYS   = ['stability','assumeCurrent','showStatistics'];
 const SMOOTHER_SETTING_KEYS   = [
@@ -506,12 +535,22 @@ function renderGroupInto(elId, polars, deltas, attitudes) {
 }
 
 function renderLiveSections() {
+  const inputPolars = filterById(state.polarsAll, ['groundSpeed']);
+  const inputDeltas = filterById(state.deltasAll, ['heading.angle', 'boatSpeed']);
+  const inputAttitudes = filterById(state.attitudesAll, ['attitude']);
+  const fallbackInputPolars = inputPolars.length ? inputPolars : filterById(state.polarsAll, ['groundSpeed.smoothed']);
+  const fallbackInputDeltas = inputDeltas.length ? inputDeltas : filterById(state.deltasAll, ['heading.smoothed', 'boatSpeed.smoothed']);
+  const fallbackInputAttitudes = inputAttitudes.length ? inputAttitudes : filterById(state.attitudesAll, ['attitude.smoothed']);
+
   // Inputs section — raw sensor readings only (smoothing is internal to the plugin)
   renderGroupInto('inputs-values',
-    filterById(state.polarsAll,    ['groundSpeed']),
-    filterById(state.deltasAll,    ['heading.angle', 'boatSpeed']),
-    filterById(state.attitudesAll, ['attitude'])
+    fallbackInputPolars,
+    fallbackInputDeltas,
+    fallbackInputAttitudes
   );
+  const inputWarningIds = ['boatSpeed', 'attitude', 'heading.angle', 'groundSpeed', 'boatSpeed.smoothed', 'groundSpeed.smoothed', 'heading.smoothed', 'attitude.smoothed'];
+  if (config && config.assumeCurrent) inputWarningIds.push('current.smoothed');
+  renderInputWarnings('inputs-warnings', inputWarningIds);
 
   // Estimation — inputs (raw sensor data used for boat speed estimation)
   renderGroupInto('estimation-inputs',
@@ -530,9 +569,8 @@ function renderLiveSections() {
     [], []
   );
   // Estimation — warnings
-  renderWarnings('estimation-warnings',
-    ['boatSpeed', 'attitude', 'heading.angle', 'groundSpeed']
-  );
+  const estimationWarnings = document.getElementById('estimation-warnings');
+  if (estimationWarnings) estimationWarnings.innerHTML = '';
 
   // Learning — inputs: smoothed sensors + current if assumeCurrent
   const learningCurrentPolars = (config && config.assumeCurrent)
@@ -544,9 +582,8 @@ function renderLiveSections() {
     filterById(state.attitudesAll, ['attitude.smoothed'])
   );
   // Learning — warnings
-  const learningWarningIds = ['boatSpeed.smoothed', 'groundSpeed.smoothed', 'heading.smoothed', 'attitude.smoothed'];
-  if (config && config.assumeCurrent) learningWarningIds.push('current.smoothed');
-  renderWarnings('learning-warnings', learningWarningIds);
+  const learningWarnings = document.getElementById('learning-warnings');
+  if (learningWarnings) learningWarnings.innerHTML = '';
   // Learning status section
   const statusTbody = document.querySelector('#learning-status-table tbody');
   if (statusTbody) {
@@ -615,6 +652,7 @@ async function tick() {
     .then(r => r.ok ? r.json() : null)
     .catch(() => null);
   _pluginStatus = statusData?.status ?? '';
+  lifecycleWarnings = Array.isArray(statusData?.lifecycleWarnings) ? statusData.lifecycleWarnings : [];
   _refreshMessage();
 }
 
