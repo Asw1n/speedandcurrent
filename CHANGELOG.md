@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
+## [Unreleased]
+
+### Fixed
+- Input subscriptions now recover automatically after idle or stale periods, and the webapp exposes lifecycle warnings for affected paths.
+- Corrected output paths are now explicitly cleared with `null` when estimation is disabled or when the plugin stops, preventing stale values from lingering on the Signal K bus.
+- The webapp-facing status and report endpoints now reflect the plugin's current runtime state more directly.
+
 ## [2.1.2] - 2026-07-23
 
 ### Fixed

@@ -139,6 +139,56 @@ module.exports = function (app) {
   let started = null;
   let minSpeed = 0;
   let lastSave = 0;
+  let lifecycleWarningMap = new Map();
+  let lifecycleWarnings = [];
+
+  function setLifecycleWarning(id, status, path) {
+    const safePath = path || 'unknown path';
+    const message = status === 'idle'
+      ? `Input ${id} is idle on ${safePath}; resubscribing`
+      : `Input ${id} is stale on ${safePath}`;
+    lifecycleWarningMap.set(id, {
+      id,
+      status,
+      path: safePath,
+      message,
+      updatedAt: Date.now()
+    });
+    lifecycleWarnings = Array.from(lifecycleWarningMap.values())
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  function clearLifecycleWarning(id) {
+    if (!lifecycleWarningMap.has(id)) return;
+    lifecycleWarningMap.delete(id);
+    lifecycleWarnings = Array.from(lifecycleWarningMap.values())
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  function buildLifecycleCallbacks(id, getPath, resubscribe) {
+    return {
+      onDelta: () => {
+        clearLifecycleWarning(id);
+      },
+      onStale: () => {
+        if (!isRunning) return;
+        const path = getPath();
+        app.debug(`[${plugin.id}] stale input ${id} on ${path}`);
+        setLifecycleWarning(id, 'stale', path);
+      },
+      onIdle: () => {
+        if (!isRunning) return;
+        const path = getPath();
+        app.debug(`[${plugin.id}] idle input ${id} on ${path}; resubscribing`);
+        setLifecycleWarning(id, 'idle', path);
+        try {
+          resubscribe();
+        } catch (e) {
+          app.debug(`[${plugin.id}] resubscribe failed for ${id}: ${e.message}`);
+        }
+      }
+    };
+  }
 
   const plugin = {};
   plugin.id = "SpeedAndCurrent";
@@ -160,7 +210,9 @@ module.exports = function (app) {
       if (!isRunning) {
         res.status(503).json({ error: "Plugin is not running" });
       } else {
-        res.json(reportFull.report());
+        const payload = reportFull.report();
+        payload.lifecycleWarnings = lifecycleWarnings;
+        res.json(payload);
       }
     });
 
@@ -175,7 +227,7 @@ module.exports = function (app) {
 
 
     router.get('/api/status', (req, res) => {
-      res.json({ status: pluginStatus, isRunning });
+      res.json({ status: pluginStatus, isRunning, lifecycleWarnings });
     });
 
     // --- Settings API ---
@@ -304,6 +356,8 @@ module.exports = function (app) {
   plugin.start = (settings) => {
     setStatus('Starting');
     app.debug("Starting");
+    lifecycleWarningMap = new Map();
+    lifecycleWarnings = [];
     readOptions(); // pick up any saves since registerWithRouter ran
     migrateConfig(); // strip obsolete fields from persisted config
     const tableName = options.tableName || 'correctionTable';
@@ -319,7 +373,12 @@ module.exports = function (app) {
       angleRange: '0to2pi',
       meta: { displayName: 'Heading', plane: 'Ground' },
       SmootherClass,
-      smootherOptions
+      smootherOptions,
+      ...buildLifecycleCallbacks(
+        'heading.angle',
+        () => smoothedHeading?.handler?.path || 'navigation.headingTrue',
+        () => { smoothedHeading?.unsubscribe(); smoothedHeading?.subscribe(false, true); }
+      )
     });
     rawHeading = smoothedHeading.handler;
 
@@ -330,7 +389,12 @@ module.exports = function (app) {
       path: 'navigation.attitude',
       subscribe: true,
       SmootherClass,
-      smootherOptions
+      smootherOptions,
+      ...buildLifecycleCallbacks(
+        'attitude.smoothed',
+        () => smoothedAttitude?.handler?.path || 'navigation.attitude',
+        () => { smoothedAttitude?.unsubscribe(); smoothedAttitude?.subscribe(); }
+      )
     });
     rawAttitude = smoothedAttitude.handler;
 
@@ -384,6 +448,7 @@ module.exports = function (app) {
       SmootherClass,
       smootherOptions,
       onDelta: () => {
+        clearLifecycleWarning('boatSpeed.smoothed');
         // Drain any pending option changes before calculating
         if (Object.keys(changedOptions).length) applyOptionChanges();
 
@@ -408,6 +473,21 @@ module.exports = function (app) {
         } else {
           table.lastUpdateResult = null;
         }
+      }
+      ,
+      onIdle: () => {
+        if (!isRunning) return;
+        const path = smoothedBoatSpeed?.handler?.path || 'navigation.speedThroughWater';
+        app.debug(`[${plugin.id}] idle input boatSpeed.smoothed on ${path}; resubscribing`);
+        setLifecycleWarning('boatSpeed.smoothed', 'idle', path);
+        smoothedBoatSpeed?.unsubscribe();
+        smoothedBoatSpeed?.subscribe();
+      },
+      onStale: () => {
+        if (!isRunning) return;
+        const path = smoothedBoatSpeed?.handler?.path || 'navigation.speedThroughWater';
+        app.debug(`[${plugin.id}] stale input boatSpeed.smoothed on ${path}`);
+        setLifecycleWarning('boatSpeed.smoothed', 'stale', path);
       }
     });
     rawBoatSpeed = smoothedBoatSpeed.handler;
@@ -439,7 +519,12 @@ module.exports = function (app) {
       angleRange: '0to2pi',
       meta: { displayName: 'Groundspeed', plane: 'Ground' },
       SmootherClass,
-      smootherOptions
+      smootherOptions,
+      ...buildLifecycleCallbacks(
+        'groundSpeed.smoothed',
+        () => `${smoothedGroundSpeed?.polar?.pathMagnitude || 'navigation.speedOverGround'}, ${smoothedGroundSpeed?.polar?.pathAngle || 'navigation.courseOverGroundTrue'}`,
+        () => { smoothedGroundSpeed?.unsubscribe(); smoothedGroundSpeed?.subscribe(true, true); }
+      )
     });
     rawGroundSpeed = smoothedGroundSpeed.polar;
 
@@ -528,6 +613,8 @@ module.exports = function (app) {
 
         pluginStatus = 'Stopped';
         isRunning = false;
+        lifecycleWarningMap = new Map();
+        lifecycleWarnings = [];
         resolve();
       } catch (error) {
         reject(error);
