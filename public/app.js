@@ -296,15 +296,10 @@ const paramMeta = {
     min: 0.01, max: 0.99, step: 0.01, default: 0.2,
     description: 'Steady-state Kalman gain (0 ≈ slow/smooth, 1 ≈ fast/raw). Clamped to 0.01–0.99.'
   },
-  stalenessDetection: {
-    label: 'Staleness detection',
-    type: 'boolean',
-    description: 'Mark inputs as unavailable when no data has been received for a period. '
-  },
 };
 
 // Settings groups for each UI section
-const INPUTS_SETTING_KEYS     = ['stalenessDetection'];
+const INPUTS_SETTING_KEYS     = [];
 const ESTIMATION_SETTING_KEYS = ['sogFallback'];
 const LEARNING_SETTING_KEYS   = ['stability','assumeCurrent','showStatistics'];
 const SMOOTHER_SETTING_KEYS   = [

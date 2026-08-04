@@ -38,8 +38,7 @@ module.exports = function (app) {
     smootherTau: 3,
     smootherTimeSpan: 5,
     smootherSteadyState: 0.2,
-    showStatistics: false,
-    stalenessDetection: true
+    showStatistics: false
   };
 
   
@@ -322,10 +321,6 @@ module.exports = function (app) {
       SmootherClass,
       smootherOptions
     });
-    // The magnitude handler has a fixed value of 1 and is never subscribed, so its timestamp
-    // stays null forever. Staleness detection on it would always force _stale=true, blocking
-    // processChanges() from setting polar._ready=true on every heading delta.
-    smoothedHeading.polar.magnitudeHandler.stalenessDetection = false;
     rawHeading = smoothedHeading.handler;
 
     //attitude
@@ -370,7 +365,6 @@ module.exports = function (app) {
     });
     noCurrent.xSmoother.reset(0,0);
     noCurrent.ySmoother.reset(0,0);
-    noCurrent.stalenessDetection = false; // noCurrent is a fixed zero-vector, never receives live data
     PolarSmoother.send(app, plugin.id, [noCurrent]);
 
     MessageHandler.setMeta(app, plugin.id, 'navigation.leewayAngle', {
@@ -388,7 +382,33 @@ module.exports = function (app) {
       path: 'navigation.speedThroughWater',
       subscribe: true,
       SmootherClass,
-      smootherOptions
+      smootherOptions,
+      onDelta: () => {
+        // Drain any pending option changes before calculating
+        if (Object.keys(changedOptions).length) applyOptionChanges();
+
+        const wellUnderway = started < new Date() - 60 * 1000;
+
+        setStatus(wellUnderway ? 'Running' : 'Stabilizing');
+        if (options.estimateBoatSpeed) correct(wellUnderway);
+        if (options.updateCorrectionTable) {
+          if (wellUnderway) {
+            updateTable();
+            // Save correction table periodically (skip if table is empty to avoid overwriting good data on disk)
+            const now = Date.now();
+            if (now - lastSave > 60_000) {
+              if (!isTableEmpty(table)) {
+                saveTable(table, path.join(app.getDataDirPath(), table.id + '.json'));
+              }
+              lastSave = now;
+            }
+          } else {
+            table.lastUpdateResult = 'stabilizing';
+          }
+        } else {
+          table.lastUpdateResult = null;
+        }
+      }
     });
     rawBoatSpeed = smoothedBoatSpeed.handler;
 
@@ -466,50 +486,12 @@ module.exports = function (app) {
 
     //#endregion
 
-    // Apply staleness detection to all subscribed smoother instances.
-    // noCurrent is intentionally excluded — it is a fixed zero-vector and never receives live data.
-    // Only apply when sd = false: all smoothers already default to stalenessDetection = true.
-    // Explicitly calling the setter with true at startup forces _stale = true on handlers that have
-    // never received data, causing the first sample to be dropped (library side-effect).
-    const sd = options.stalenessDetection ?? true;
-    if (!sd) {
-      for (const s of [smoothedHeading, smoothedAttitude, smoothedBoatSpeed, smoothedGroundSpeed, smoothedCurrent, smoothedResidual]) {
-        if (s) s.stalenessDetection = false;
-      }
-    }
-
     isRunning = true;
     started = Date.now();
     lastSave = 0;
     setStatus('Running');
     app.debug("Running");
 
-    smoothedBoatSpeed.onChange = () => {
-      // Drain any pending option changes before calculating
-      if (Object.keys(changedOptions).length) applyOptionChanges();
-
-      const wellUnderway = started < new Date() - 60 * 1000;
-
-      setStatus(wellUnderway ? 'Running' : 'Stabilizing');
-      if (options.estimateBoatSpeed) correct(wellUnderway);
-      if (options.updateCorrectionTable) {
-        if (wellUnderway) {
-          updateTable();
-          // Save correction table periodically (skip if table is empty to avoid overwriting good data on disk)
-          const now = Date.now();
-          if (now - lastSave > 60_000) {
-            if (!isTableEmpty(table)) {
-              saveTable(table, path.join(app.getDataDirPath(), table.id + '.json'));
-            }
-            lastSave = now;
-          }
-        } else {
-          table.lastUpdateResult = 'stabilizing';
-        }
-      } else {
-        table.lastUpdateResult = null;
-      }
-    };
   }
 
   plugin.stop = () => {
@@ -723,13 +705,7 @@ module.exports = function (app) {
       const value = changedOptions[key];
       options[key] = value;
 
-      if (key === 'stalenessDetection') {
-        const sdVal = Boolean(value);
-        for (const s of [smoothedHeading, smoothedAttitude, smoothedBoatSpeed, smoothedGroundSpeed, smoothedCurrent, smoothedResidual]) {
-          if (s) s.stalenessDetection = sdVal;
-        }
-        // noCurrent is always excluded from staleness detection
-      } else if (key === 'updateCorrectionTable') {
+      if (key === 'updateCorrectionTable') {
         if (!value && table && !isTableEmpty(table)) {
           // Learning switched off — persist current state before periodic saves stop
           saveTableSync(table, path.join(app.getDataDirPath(), table.id + '.json'));
