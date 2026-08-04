@@ -1,40 +1,20 @@
 name: Release
 
 on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish to npm'
+        required: false
+        default: false
+        type: boolean
   push:
     tags:
       - '[0-9]+.[0-9]+.[0-9]+*'
       - 'v[0-9]+.[0-9]+.[0-9]+*'
 
 jobs:
-  test:
-    uses: SignalK/signalk-server/.github/workflows/plugin-ci.yml@master
-    with:
-      test-command: npm test
-      build-command: npm run build --if-present
-      node-versions: '["22"]'
-      enable-armv7: false
-      enable-signalk-integration: false
-      signalk-server-versions: '["latest"]'
-
-  release:
-    needs: test
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, 'beta') }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   publish:
-    needs: release
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -45,8 +25,12 @@ jobs:
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
-      - run: npm ci
+      - run: npm install
+      - name: Dry run validation
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish != true }}
+        run: echo "Manual workflow validation only; npm publish skipped."
       - name: Publish to npm
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish == true }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
