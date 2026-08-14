@@ -642,7 +642,7 @@ module.exports = function (app) {
 
     // Priority 1: SOG fallback when STW is stuck at zero
     // (onChange only fires when STW is ready, so a missing STW cannot reach here)
-    if (options.sogFallback && rawGroundSpeed.ready && correctedBoatSpeed.magnitude === 0 && rawGroundSpeed.magnitude >= minSpeed) {
+    if (options.sogFallback && rawGroundSpeed.ready && rawBoatSpeed.ready && rawBoatSpeed.value === 0 && rawGroundSpeed.magnitude >= minSpeed) {
         correctedBoatSpeed.setVectorValue({ x: rawGroundSpeed.magnitude, y: 0 });
     }
     else if (rawAttitude.ready) {

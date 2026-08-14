@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Input subscriptions now recover automatically after idle or stale periods, and the webapp exposes lifecycle warnings for affected paths.
 - Corrected output paths are now explicitly cleared with `null` when estimation is disabled or when the plugin stops, preventing stale values from lingering on the Signal K bus.
 - The webapp-facing status and report endpoints now reflect the plugin's current runtime state more directly.
+- SOG fallback now checks raw STW (`rawBoatSpeed`) directly when detecting a zero paddlewheel reading, avoiding dependence on the derived corrected speed value.
 
 ## [2.1.2] - 2026-07-23
 
