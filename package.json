@@ -34,6 +34,9 @@
       "./docs/correctionTable.png",
       "./docs/STW_estimation.png",
       "./docs/learning.png"
+    ],
+    "recommends": [
+      "@meri-imperiumi/signalk-autostate"
     ]
   },
   "dependencies": {
