@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
-## [Unreleased]
+## [2.3.0] - 2026-08-16
 
 ### Added
 - Learning status now distinguishes between active learning and observations that were skipped, rejected, or invalid, and the webapp reports the current reason more clearly.
