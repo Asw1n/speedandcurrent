@@ -321,12 +321,6 @@ const paramMeta = {
 };
 
 // Settings groups for each UI section
-const INPUTS_SETTING_KEYS     = [
-  'smootherClass',
-  { key: 'smootherTau',         showIf: cfg => cfg.smootherClass === 'ExponentialSmoother' },
-  { key: 'smootherTimeSpan',    showIf: cfg => (cfg.smootherClass || 'MovingAverageSmoother') === 'MovingAverageSmoother' },
-  { key: 'smootherSteadyState', showIf: cfg => cfg.smootherClass === 'KalmanSmoother' },
-];
 const ESTIMATION_SETTING_KEYS = ['sogFallback'];
 const LEARNING_SETTING_KEYS   = ['stability', 'suspendLearningOnNavigationState', 'assumeCurrent', 'showStatistics'];
 const SMOOTHER_SETTING_KEYS   = [
@@ -443,7 +437,6 @@ function renderSectionToggles() {
 
 function renderSettingsPanel() {
   if (!config) return;
-  renderSettingsRows('inputs-settings-table',     INPUTS_SETTING_KEYS);
   renderSettingsRows('estimation-settings-table', ESTIMATION_SETTING_KEYS);
   renderSettingsRows('smoother-settings-table',   SMOOTHER_SETTING_KEYS);
   renderSettingsRows('learning-settings-table',   LEARNING_SETTING_KEYS);
