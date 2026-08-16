@@ -19,19 +19,134 @@ const {
 
 const { CorrectionTable } = require('./correctionTable.js');
 
+const LONG_STABILIZING_MS = 60 * 1000;
+const ALWAYS_BLOCKING_NAVIGATION_STATES = new Set(['anchored', 'moored']);
+const OPTIONAL_BLOCKING_NAVIGATION_STATES = new Set(['motoring']);
+
+function normalizeNavigationState(value) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : null;
+}
+
+function getShortStabilizingMs(options = {}) {
+  return Math.max(0, Number(options.smootherTimeSpan) || 5) * 1000;
+}
+
+function isCogOverrideActive(groundSpeedPolar, speedThreshold) {
+  const sogHandler = groundSpeedPolar?.magnitudeHandler;
+  return !groundSpeedPolar?.ready
+    && sogHandler?.ready
+    && Number.isFinite(sogHandler.value)
+    && sogHandler.value < speedThreshold;
+}
+
+function evaluateLearningMode({ options = {}, navigationState, stabilizingUntil = 0, stabilizingReason = null, now = Date.now() }) {
+  const normalizedNavigationState = normalizeNavigationState(navigationState?.value);
+  const navigationGateReady = navigationState?.ready === true;
+  const navigationGateBlocking = navigationGateReady && (
+    ALWAYS_BLOCKING_NAVIGATION_STATES.has(normalizedNavigationState)
+    || (!!options.suspendLearningOnNavigationState && OPTIONAL_BLOCKING_NAVIGATION_STATES.has(normalizedNavigationState))
+  );
+
+  if (!options.updateCorrectionTable) {
+    return { state: 'off', reason: 'manual', navigationGateBlocking, normalizedNavigationState };
+  }
+
+  if (navigationGateBlocking) {
+    return { state: 'suspended', reason: 'nav_state', navigationGateBlocking, normalizedNavigationState };
+  }
+
+  if (now < stabilizingUntil) {
+    return { state: 'stabilizing', reason: stabilizingReason || 'startup', navigationGateBlocking, normalizedNavigationState };
+  }
+
+  return { state: 'active', reason: null, navigationGateBlocking, normalizedNavigationState };
+}
+
+function evaluateObservationGate({
+  learningMode,
+  inputsReady,
+  assumeCurrent,
+  currentReady,
+  stw,
+  sog,
+  speedThreshold,
+}) {
+  if (learningMode.state === 'off') {
+    return { state: 'skipped', reason: 'learning_off' };
+  }
+  if (learningMode.state === 'suspended') {
+    return { state: 'skipped', reason: learningMode.reason === 'cog_override' ? 'cog_override_active' : 'nav_state_blocked' };
+  }
+  if (learningMode.state === 'stabilizing') {
+    return { state: 'skipped', reason: 'stabilizing' };
+  }
+  if (!inputsReady) {
+    return { state: 'invalid', reason: assumeCurrent && !currentReady ? 'missing_current_when_required' : 'missing_input' };
+  }
+  if (!(stw > speedThreshold)) {
+    return { state: 'skipped', reason: 'stw_below_threshold' };
+  }
+  if (!(sog >= speedThreshold)) {
+    return { state: 'skipped', reason: 'sog_below_threshold' };
+  }
+  return { state: 'pending', reason: null };
+}
+
+function buildNavigationStateStatus(handler, gateEnabled) {
+  if (!handler) {
+    return {
+      enabled: !!gateEnabled,
+      path: 'navigation.state',
+      pathKnown: false,
+      ready: false,
+      value: null,
+      blocking: false
+    };
+  }
+
+  const state = handler.state;
+  const value = handler.value ?? null;
+  const normalized = normalizeNavigationState(value);
+  return {
+    enabled: !!gateEnabled,
+    path: handler.path,
+    pathKnown: state.pathKnown,
+    ready: state.ready,
+    isStale: state.isStale,
+    value,
+    blocking: state.ready && (
+      ALWAYS_BLOCKING_NAVIGATION_STATES.has(normalized)
+      || (!!gateEnabled && OPTIONAL_BLOCKING_NAVIGATION_STATES.has(normalized))
+    )
+  };
+}
+
+function getDerivedObservationStatus(learningMode, lastState, lastReason) {
+  if (learningMode.state === 'off') {
+    return { state: 'skipped', reason: 'learning_off' };
+  }
+  if (learningMode.state === 'stabilizing') {
+    return { state: 'skipped', reason: 'stabilizing' };
+  }
+  if (learningMode.state === 'suspended') {
+    return { state: 'skipped', reason: learningMode.reason === 'cog_override' ? 'cog_override_active' : 'nav_state_blocked' };
+  }
+  return { state: lastState, reason: lastReason };
+}
+
 module.exports = function (app) {
 
   const DEFAULT_DIMS = { maxSpeed: 9, speedStep: 1, maxHeel: 32, heelStep: 8 };
 
   let options = {};
   let changedOptions = {};
-  let hasPendingChanges = false;
   const defaultOptions = {
     sogFallback: true,
     estimateBoatSpeed: false,
     updateCorrectionTable: true,
     stability: 7,
     assumeCurrent: false,
+    suspendLearningOnNavigationState: false,
     tableName: 'correctionTable',
     configVersion: 2,
     smootherClass: 'MovingAverageSmoother',
@@ -67,7 +182,7 @@ module.exports = function (app) {
    * writes it back if anything changed. Called once on every start().
    */
   function migrateConfig() {
-    const obsoleteKeys = ['headingSource', 'boatSpeedSource', 'SOGSource', 'attitudeSource', 'preventDuplication'];
+    const obsoleteKeys = ['headingSource', 'boatSpeedSource', 'SOGSource', 'attitudeSource', 'preventDuplication', 'minSogForLearning'];
     const hadObsolete = obsoleteKeys.some(k => k in options);
     for (const k of obsoleteKeys) delete options[k];
     if (hadObsolete || (options.configVersion || 0) < 2) {
@@ -109,7 +224,7 @@ module.exports = function (app) {
 
   function swapTable(newTable) {
     table = newTable;
-    minSpeed = table.step[0] / 2;
+    minSpeed = table.step[0];
     if (reportFull) reportFull.setTables([table]);
     lastSave = Date.now(); // explicit table operations already save; defer next periodic save
   }
@@ -136,11 +251,66 @@ module.exports = function (app) {
   let noCurrent = null;
   let rawBoatSpeed = null;
   let rawGroundSpeed = null;
-  let started = null;
   let minSpeed = 0;
   let lastSave = 0;
+  let navigationStateHandler = null;
+  let lastNavigationStateValue = null;
+  let learningStabilizingUntil = 0;
+  let learningStabilizingReason = 'startup';
+  let lastObservationState = null;
+  let lastObservationReason = null;
   let lifecycleWarningMap = new Map();
   let lifecycleWarnings = [];
+
+  function setObservationStatus(state, reason = null) {
+    lastObservationState = state;
+    lastObservationReason = reason;
+    if (table) {
+      table.lastUpdateResult = state;
+      table.lastUpdateReason = reason;
+    }
+  }
+
+  function resetLearningStabilization(reason, durationMs) {
+    const delay = Math.max(0, Number(durationMs) || 0);
+    learningStabilizingUntil = Date.now() + delay;
+    learningStabilizingReason = reason;
+  }
+
+  function handleNavigationStateDelta() {
+    const normalized = normalizeNavigationState(navigationStateHandler?.value);
+    if (normalized === lastNavigationStateValue) return;
+    if (lastNavigationStateValue !== null) {
+      resetLearningStabilization('nav_state_change', LONG_STABILIZING_MS);
+    }
+    lastNavigationStateValue = normalized;
+  }
+
+  function getLearningStatePayload() {
+    const navigationState = buildNavigationStateStatus(navigationStateHandler, options.suspendLearningOnNavigationState);
+    const learningMode = evaluateLearningMode({
+      options,
+      navigationState,
+      stabilizingUntil: learningStabilizingUntil,
+      stabilizingReason: learningStabilizingReason,
+      now: Date.now()
+    });
+    if (learningMode.state === 'active' && isCogOverrideActive(rawGroundSpeed, minSpeed)) {
+      learningMode.state = 'suspended';
+      learningMode.reason = 'cog_override';
+    }
+    const observation = getDerivedObservationStatus(learningMode, lastObservationState, lastObservationReason);
+
+    return {
+      state: learningMode.state,
+      reason: learningMode.reason,
+      observationState: observation.state,
+      observationReason: observation.reason,
+      minStwForLearning: minSpeed,
+      minSogForLearning: minSpeed,
+      navigationState
+    };
+  }
 
   function setLifecycleWarning(id, status, path) {
     const safePath = path || 'unknown path';
@@ -212,6 +382,7 @@ module.exports = function (app) {
       } else {
         const payload = reportFull.report();
         payload.lifecycleWarnings = lifecycleWarnings;
+        payload.learningState = getLearningStatePayload();
         res.json(payload);
       }
     });
@@ -227,7 +398,7 @@ module.exports = function (app) {
 
 
     router.get('/api/status', (req, res) => {
-      res.json({ status: pluginStatus, isRunning, lifecycleWarnings });
+      res.json({ status: pluginStatus, isRunning, lifecycleWarnings, learningState: getLearningStatePayload() });
     });
 
     // --- Settings API ---
@@ -248,7 +419,6 @@ module.exports = function (app) {
         }
       }
       changedOptions = { ...changedOptions, ...body };
-      hasPendingChanges = true;
       res.json({ ...options, ...changedOptions });
     });
 
@@ -363,7 +533,7 @@ module.exports = function (app) {
     const tableName = options.tableName || 'correctionTable';
     const tableFilePath = path.join(app.getDataDirPath(), tableName + '.json');
     table = loadTable(options, tableFilePath);
-    minSpeed = table.step[0] / 2;
+    minSpeed = table.step[0];
 
     //#region Handler and Polar Initialization
     const { SmootherClass, smootherOptions } = resolveSmootherConfig();
@@ -382,7 +552,7 @@ module.exports = function (app) {
     });
     rawHeading = smoothedHeading.handler;
 
-    //attitude
+    // attitude
     smoothedAttitude = createSmoothedHandler({
       app, pluginId: plugin.id,
       id: 'attitude',
@@ -397,6 +567,13 @@ module.exports = function (app) {
       )
     });
     rawAttitude = smoothedAttitude.handler;
+
+    navigationStateHandler = new MessageHandler(app, plugin.id, 'navigationState');
+    navigationStateHandler.configure('navigation.state');
+    navigationStateHandler.onDelta = () => {
+      handleNavigationStateDelta();
+    };
+    navigationStateHandler.subscribe();
 
 
     // current
@@ -452,26 +629,26 @@ module.exports = function (app) {
         // Drain any pending option changes before calculating
         if (Object.keys(changedOptions).length) applyOptionChanges();
 
-        const wellUnderway = started < new Date() - 60 * 1000;
+        const learningMode = evaluateLearningMode({
+          options,
+          navigationState: buildNavigationStateStatus(navigationStateHandler, options.suspendLearningOnNavigationState),
+          stabilizingUntil: learningStabilizingUntil,
+          stabilizingReason: learningStabilizingReason,
+          now: Date.now()
+        });
 
-        setStatus(wellUnderway ? 'Running' : 'Stabilizing');
+        const wellUnderway = learningMode.state !== 'stabilizing';
+        setStatus(learningMode.state === 'stabilizing' ? 'Stabilizing' : 'Running');
         if (options.estimateBoatSpeed) correct(wellUnderway);
-        if (options.updateCorrectionTable) {
-          if (wellUnderway) {
-            updateTable();
-            // Save correction table periodically (skip if table is empty to avoid overwriting good data on disk)
-            const now = Date.now();
-            if (now - lastSave > 60_000) {
-              if (!isTableEmpty(table)) {
-                saveTable(table, path.join(app.getDataDirPath(), table.id + '.json'));
-              }
-              lastSave = now;
+        updateTable();
+        if (lastObservationState === 'accepted' && options.updateCorrectionTable) {
+          const now = Date.now();
+          if (now - lastSave > 60_000) {
+            if (!isTableEmpty(table)) {
+              saveTable(table, path.join(app.getDataDirPath(), table.id + '.json'));
             }
-          } else {
-            table.lastUpdateResult = 'stabilizing';
+            lastSave = now;
           }
-        } else {
-          table.lastUpdateResult = null;
         }
       }
       ,
@@ -572,8 +749,11 @@ module.exports = function (app) {
     //#endregion
 
     isRunning = true;
-    started = Date.now();
     lastSave = 0;
+    lastObservationState = null;
+    lastObservationReason = null;
+    lastNavigationStateValue = normalizeNavigationState(navigationStateHandler?.value);
+    resetLearningStabilization('startup', LONG_STABILIZING_MS);
     setStatus('Running');
     app.debug("Running");
 
@@ -592,6 +772,7 @@ module.exports = function (app) {
         smoothedAttitude = smoothedAttitude?.terminate();
         rawCurrent = rawCurrent?.terminate();
         smoothedCurrent = smoothedCurrent?.terminate?.();
+        navigationStateHandler = navigationStateHandler?.terminate();
         smoothedBoatSpeed = smoothedBoatSpeed?.terminate();
         correctedBoatSpeed = correctedBoatSpeed?.terminate();
         lrnBoatSpeed = lrnBoatSpeed?.terminate();
@@ -607,7 +788,11 @@ module.exports = function (app) {
         noCurrent = null;
         rawBoatSpeed = null;
         rawGroundSpeed = null;
-        started = null;
+        lastNavigationStateValue = null;
+        learningStabilizingUntil = 0;
+        learningStabilizingReason = 'startup';
+        lastObservationState = null;
+        lastObservationReason = null;
         app.setPluginStatus("Stopped");
         app.debug("Stopped");
 
@@ -653,11 +838,7 @@ module.exports = function (app) {
       }
       // Current estimation and residual also require heading (to rotate into ground frame).
       // Also handle near-zero SOG where COG is unavailable: treat groundspeed as zero vector.
-      const sogHandler = rawGroundSpeed.magnitudeHandler;
-      const nearZeroGroundSpeed = !rawGroundSpeed.ready &&
-        sogHandler.ready &&
-        Number.isFinite(sogHandler.value) &&
-        sogHandler.value < 0.3;
+      const nearZeroGroundSpeed = isCogOverrideActive(rawGroundSpeed, minSpeed);
       if (rawHeading.ready && (rawGroundSpeed.ready || nearZeroGroundSpeed)) {
         boatSpeedRefGround.copyFrom(correctedBoatSpeed);
         boatSpeedRefGround.rotate(rawHeading.value);
@@ -695,18 +876,43 @@ module.exports = function (app) {
    */
   function updateTable() {
     lrnBoatSpeed.setVectorValue({ x: smoothedBoatSpeed.value, y: 0 }, { x: smoothedBoatSpeed.variance ?? 0, y: 0 });
-    if (!smoothedAttitude.ready || !smoothedBoatSpeed.ready || !smoothedHeading.ready || !smoothedGroundSpeed.ready || (options.assumeCurrent && !smoothedCurrent.ready)) {
-      table.lastUpdateResult = 'invalid';
+    const learningMode = evaluateLearningMode({
+      options,
+      navigationState: buildNavigationStateStatus(navigationStateHandler, options.suspendLearningOnNavigationState),
+      stabilizingUntil: learningStabilizingUntil,
+      stabilizingReason: learningStabilizingReason,
+      now: Date.now()
+    });
+    if (learningMode.state === 'active' && isCogOverrideActive(rawGroundSpeed, minSpeed)) {
+      learningMode.state = 'suspended';
+      learningMode.reason = 'cog_override';
+    }
+    const inputsReady = smoothedAttitude.ready && smoothedBoatSpeed.ready && smoothedHeading.ready && smoothedGroundSpeed.ready;
+    const currentReady = !options.assumeCurrent || smoothedCurrent.ready;
+    const observationGate = evaluateObservationGate({
+      learningMode,
+      inputsReady,
+      assumeCurrent: options.assumeCurrent,
+      currentReady,
+      stw: smoothedBoatSpeed.value,
+      sog: smoothedGroundSpeed.magnitude,
+      speedThreshold: minSpeed
+    });
+
+    if (observationGate.state !== 'pending') {
+      if (observationGate.state === 'invalid') {
+        resetLearningStabilization('observation_reset', getShortStabilizingMs(options));
+      }
       return;
     }
-    
-    // update correction table
-    if (smoothedBoatSpeed.value > minSpeed) {
-      table.update(smoothedBoatSpeed.value, smoothedAttitude.value?.roll, smoothedGroundSpeed, options.assumeCurrent ? smoothedCurrent : noCurrent, lrnBoatSpeed, smoothedHeading.value);
-    } else {
-      table.lastUpdateResult = 'waiting';
-    }
 
+    table.update(smoothedBoatSpeed.value, smoothedAttitude.value?.roll, smoothedGroundSpeed, options.assumeCurrent ? smoothedCurrent : noCurrent, lrnBoatSpeed, smoothedHeading.value);
+    if (table.lastUpdateResult === 'accepted') {
+      setObservationStatus('accepted', 'accepted');
+    } else if (table.lastUpdateResult === 'rejected') {
+      setObservationStatus('rejected', 'estimator_outlier');
+      resetLearningStabilization('observation_reset', getShortStabilizingMs(options));
+    }
   }
 
   /**
@@ -812,7 +1018,6 @@ module.exports = function (app) {
           }
         }
       }
-
       // All other keys (sogFallback, estimateBoatSpeed, assumeCurrent,
       // stability, smootherClass, etc.) are read
       // directly from options.* so no extra action needed.
@@ -834,10 +1039,21 @@ module.exports = function (app) {
       }
       if (smoothedAttitude) { smoothedAttitude.setSmootherClass(SC); smoothedAttitude.setSmootherOptions(so); }
     }
-
-    hasPendingChanges = false;
     saveOptions();
   }
 
   return plugin;
+};
+
+module.exports._test = {
+  normalizeNavigationState,
+  getShortStabilizingMs,
+  evaluateLearningMode,
+  isCogOverrideActive,
+  evaluateObservationGate,
+  getDerivedObservationStatus,
+  buildNavigationStateStatus,
+  ALWAYS_BLOCKING_NAVIGATION_STATES,
+  OPTIONAL_BLOCKING_NAVIGATION_STATES,
+  LONG_STABILIZING_MS,
 };

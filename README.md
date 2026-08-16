@@ -66,7 +66,7 @@ Once configured, all consumers on the Signal K bus — KIP, OpenCPN, Instrument 
 | `environment.current.drift` | m/s | Estimated current speed. |
 | `environment.current.setTrue` | rad | Estimated current direction (the direction the water moves *toward*). |
 
-A 60-second stabilisation period applies after startup. No output is published during this window; the status bar shows **Stabilizing**.
+A 60-second stabilisation period applies after startup. No output is published during this window.
 
 ---
 
@@ -132,7 +132,7 @@ The panel is organised into three groups:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | **Estimate Boat Speed** | Off | Master toggle. Apply the correction table and publish corrected STW, leeway, and current. Turn on once the table has reasonable coverage. |
-| **Groundspeed Fallback** | Off | When the paddle wheel reads zero and SOG is above a minimum threshold, publish SOG as boatspeed. Primarily intended for clogged or stuck paddle wheels where the instrument is physically present but not turning — giving the rest of the instrument system a usable boat speed until the wheel is cleared. |
+| **Groundspeed Fallback** | Off | When the paddle wheel reads zero and SOG is above the current table speed-step threshold, publish SOG as boatspeed. Primarily intended for clogged or stuck paddle wheels where the instrument is physically present but not turning — giving the rest of the instrument system a usable boat speed until the wheel is cleared. |
 
 ---
 
@@ -148,11 +148,14 @@ When **Assume Current** is enabled, the smoothed current estimate is also shown 
 
 Warnings appear here if any smoothed input is unavailable.
 
+The panel also shows whether learning is currently active, suspended, or skipped for the latest observation. Learning is automatically suspended when `navigation.state` is `anchored` or `moored` when that path is available. It can also be suspended for `motoring` if enabled in the settings. Observations below the current table speed-step threshold are skipped.
+
 ### Settings
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| **Update Correction Table** | On | Master toggle. Allow the table to update from current observations. Disable temporarily in conditions you do not want recorded — motoring, surf sailing, very confused seas. |
+| **Update Correction Table** | On | Master toggle. Allow the table to update from current observations. |
+| **Suspend on navigation.state = motoring** | Off | Suspend learning when `navigation.state` reports `motoring`. `anchored` and `moored` always suspend learning when that path is available. |
 | **Stability (1–20)** | 7 | How quickly the correction table adapts to new observations. Higher = slower, more conservative. Lower = faster but noisier. See the technical section for detail. |
 | **Assume Current (experimental)** | Off | Include the running current estimate in the table update calculation. Only enable once the current estimate has had time to stabilise and tidal conditions are relatively steady. |
 | **Show Statistics (σ)** | Off | Display standard deviation alongside each smoothed value. Useful for spotting noisy sensors. |
@@ -208,7 +211,7 @@ Multiple tables can coexist on disk; only the active one is used. This makes it 
 
 **Be patient with the correction table.** A fresh table has no data and produces no corrections. Cover a range of speeds and heel angles over a few sails and the table fills in progressively. Upwind sailing covers the heel bins well; downwind and reaching fill the low-heel, varying-speed bins.
 
-**The table learns while sailing normally.** No dedicated calibration runs are needed. Just sail with **Update Correction Table** on.
+**The table learns while sailing normally.** No dedicated calibration runs are needed. Just sail with **Update Correction Table** on. Learning pauses automatically during startup stabilisation, when `navigation.state` indicates `anchored` or `moored`, optionally when it indicates `motoring`, and when SOG or STW are below the current table speed-step threshold.
 
 **Port and starboard are tracked independently.** Heel is signed: starboard positive, port negative. An asymmetric paddle wheel installation will show different corrections on each tack, and the table captures this naturally.
 

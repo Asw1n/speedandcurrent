@@ -240,6 +240,8 @@ describe('registerWithRouter', () => {
       assert.ok(response !== null, 'GET /api/settings returned no response');
       assert.ok('estimateBoatSpeed'     in response, 'missing estimateBoatSpeed');
       assert.ok('updateCorrectionTable' in response, 'missing updateCorrectionTable');
+      assert.ok('suspendLearningOnNavigationState' in response, 'missing suspendLearningOnNavigationState');
+      assert.ok(!('minSogForLearning' in response), 'obsolete minSogForLearning should not be exposed');
       assert.ok('smootherClass'         in response, 'missing smootherClass');
       assert.ok('stability'             in response, 'missing stability');
     } finally {
@@ -342,10 +344,112 @@ describe('registerWithRouter', () => {
       assert.ok(response !== null, 'GET /api/status returned no response');
       assert.ok('isRunning' in response, 'missing isRunning field');
       assert.ok('status'    in response, 'missing status field');
+      assert.ok('learningState' in response, 'missing learningState field');
       assert.strictEqual(response.isRunning, false, 'plugin should not be running before start()');
     } finally {
       cleanup();
     }
+  });
+});
+
+describe('learning gate helpers', () => {
+  const pluginFactory = require('../index.js');
+  const helpers = pluginFactory._test;
+
+  it('suspends learning only for blocking navigation.state values when enabled', () => {
+    const result = helpers.evaluateLearningMode({
+      options: { updateCorrectionTable: true, suspendLearningOnNavigationState: true },
+      navigationState: { ready: true, value: 'motoring' },
+      stabilizingUntil: 0,
+      now: 10,
+    });
+
+    assert.strictEqual(result.state, 'suspended');
+    assert.strictEqual(result.reason, 'nav_state');
+  });
+
+  it('always suspends learning for anchored even when motoring gate is disabled', () => {
+    const result = helpers.evaluateLearningMode({
+      options: { updateCorrectionTable: true, suspendLearningOnNavigationState: false },
+      navigationState: { ready: true, value: 'anchored' },
+      stabilizingUntil: 0,
+      now: 10,
+    });
+
+    assert.strictEqual(result.state, 'suspended');
+    assert.strictEqual(result.reason, 'nav_state');
+  });
+
+  it('keeps learning active when navigation.state is unavailable', () => {
+    const result = helpers.evaluateLearningMode({
+      options: { updateCorrectionTable: true, suspendLearningOnNavigationState: true },
+      navigationState: { ready: false, value: null },
+      stabilizingUntil: 0,
+      now: 10,
+    });
+
+    assert.strictEqual(result.state, 'active');
+  });
+
+  it('marks missing inputs as invalid', () => {
+    const learningMode = { state: 'active' };
+    const result = helpers.evaluateObservationGate({
+      learningMode,
+      inputsReady: false,
+      assumeCurrent: false,
+      currentReady: true,
+      stw: 3,
+      sog: 3,
+      speedThreshold: 1,
+    });
+
+    assert.deepStrictEqual(result, { state: 'invalid', reason: 'missing_input' });
+  });
+
+  it('skips observations below the speed-step SOG threshold', () => {
+    const learningMode = { state: 'active' };
+    const result = helpers.evaluateObservationGate({
+      learningMode,
+      inputsReady: true,
+      assumeCurrent: false,
+      currentReady: true,
+      stw: 3,
+      speedThreshold: 1,
+      sog: 0.2,
+    });
+
+    assert.deepStrictEqual(result, { state: 'skipped', reason: 'sog_below_threshold' });
+  });
+
+  it('returns pending when an observation may proceed to estimator update', () => {
+    const learningMode = { state: 'active' };
+    const result = helpers.evaluateObservationGate({
+      learningMode,
+      inputsReady: true,
+      assumeCurrent: true,
+      currentReady: true,
+      stw: 3,
+      speedThreshold: 1,
+      sog: 3,
+      speedThreshold: 1,
+    });
+
+    assert.deepStrictEqual(result, { state: 'pending', reason: null });
+  });
+
+  it('detects COG override when COG is absent and SOG is below the speed threshold', () => {
+    const result = helpers.isCogOverrideActive({
+      ready: false,
+      magnitudeHandler: { ready: true, value: 0.4 }
+    }, 0.5);
+
+    assert.strictEqual(result, true);
+  });
+
+  it('derives skipped observation when learning is off', () => {
+    const result = helpers.getDerivedObservationStatus({ state: 'off' }, 'accepted', 'accepted');
+
+    assert.deepStrictEqual(result, { state: 'skipped', reason: 'learning_off' });
   });
 });
 

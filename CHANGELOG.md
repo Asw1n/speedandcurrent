@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
+## [Unreleased]
+
+### Added
+- Learning status now distinguishes between active learning and observations that were skipped, rejected, or invalid, and the webapp reports the current reason more clearly.
+
+### Changed
+- Correction-table learning now uses automatic gates based on `navigation.state`, with `anchored` and `moored` always suspending learning when available and `motoring` optionally suspending it.
+- The learning threshold for both STW and SOG now follows the active table speed-step size.
+- The webapp no longer exposes a separate minimum-SOG learning setting.
+
+### Fixed
+- When learning is off or suspended, the webapp no longer keeps showing a stale previous observation result.
+
 ## [2.2.1] - 2026-08-14
 
 ### Fixed

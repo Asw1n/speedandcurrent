@@ -275,11 +275,8 @@ function _refreshMessage() {
     else el.textContent = _explicitMsg;
     return;
   }
-  const isRunningOk = (_pluginStatus === 'Running' || _pluginStatus === '');
+  const isRunningOk = (_pluginStatus === 'Running' || _pluginStatus === 'Stabilizing' || _pluginStatus === '');
   if (!isRunningOk) {
-    el.style.color =
-      _pluginStatus === 'Stabilizing'                    ? '#084298' :
-      _pluginStatus === 'Falling back to Speed Over Ground' ? '#664d03' : '#842029';
     el.textContent = _pluginStatus;
   } else {
     el.style.color = '';
@@ -292,6 +289,7 @@ function _refreshMessage() {
 const paramMeta = {
   estimateBoatSpeed:     { label: 'Estimate boat speed',                  type: 'boolean' },
   updateCorrectionTable: { label: 'Update correction table',              type: 'boolean' },
+  suspendLearningOnNavigationState: { label: 'Suspend on navigation.state = motoring', type: 'boolean', description: 'Suspend learning when navigation.state is motoring. Anchored and moored always suspend learning when the path is available.' },
   assumeCurrent:         { label: 'Assume current during update',         type: 'boolean', description: 'Experimental, works best when currents are relatively stable.' },
   sogFallback:           { label: 'Groundspeed fallback',                 type: 'boolean', description: 'Output Groundspeed as Boatspeed when the paddlewheel sensor is malfunctioning or stalled.' },
   stability:             { label: 'Stability (1–20)',                     type: 'number', min: 1, max: 20, step: 1, default: 7, description: 'How quickly the correction table adapts to new observations. Higher values mean slower, more stable changes.' },
@@ -330,7 +328,7 @@ const INPUTS_SETTING_KEYS     = [
   { key: 'smootherSteadyState', showIf: cfg => cfg.smootherClass === 'KalmanSmoother' },
 ];
 const ESTIMATION_SETTING_KEYS = ['sogFallback'];
-const LEARNING_SETTING_KEYS   = ['stability','assumeCurrent','showStatistics'];
+const LEARNING_SETTING_KEYS   = ['stability', 'suspendLearningOnNavigationState', 'assumeCurrent', 'showStatistics'];
 const SMOOTHER_SETTING_KEYS   = [
   'smootherClass',
   { key: 'smootherTau',         showIf: cfg => cfg.smootherClass === 'ExponentialSmoother' },
@@ -535,6 +533,7 @@ function renderGroupInto(elId, polars, deltas, attitudes) {
 }
 
 function renderLiveSections() {
+  const learningState = state.learningState || null;
   const inputPolars = filterById(state.polarsAll, ['groundSpeed']);
   const inputDeltas = filterById(state.deltasAll, ['heading.angle', 'boatSpeed']);
   const inputAttitudes = filterById(state.attitudesAll, ['attitude']);
@@ -583,31 +582,60 @@ function renderLiveSections() {
   );
   // Learning — warnings
   const learningWarnings = document.getElementById('learning-warnings');
-  if (learningWarnings) learningWarnings.innerHTML = '';
+  if (learningWarnings) {
+    learningWarnings.innerHTML = '';
+    const navState = learningState?.navigationState;
+    if (navState?.enabled && navState.pathKnown === false) {
+      const ul = document.createElement('ul');
+      ul.className = 'list-unstyled small ps-3';
+      const li = document.createElement('li');
+      li.textContent = 'navigation.state is not available; navigation-state learning gate is inactive.';
+      ul.appendChild(li);
+      learningWarnings.appendChild(ul);
+    }
+  }
   // Learning status section
   const statusTbody = document.querySelector('#learning-status-table tbody');
   if (statusTbody) {
-    const tableData = Object.values(state.tablesById)[0];
-    const result = tableData?.lastUpdateResult ?? null;
-    const learningText  = result === null          ? 'Off'
-                        : result === 'stabilizing' ? 'Stabilising'
-                        : 'Active';
-    const learningClass = result === null          ? 'text-muted'
-                        : result === 'stabilizing' ? 'text-warning'
-                        : 'text-success';
-    const obsText       = result === 'accepted'    ? 'Accepted'
-                        : result === 'rejected'    ? 'Rejected'
-                        : result === 'invalid'     ? 'Invalid'
-                        : result === 'waiting'     ? 'Below threshold'
-                        : '\u2014';
-    const obsClass      = result === 'accepted'    ? 'text-success'
-                        : result === 'rejected'    ? 'text-danger'
-                        : result === 'invalid'     ? 'text-warning'
-                        : result === 'waiting'     ? 'text-muted'
-                        : 'text-muted';
+    const learningTextMap = {
+      off: 'Off',
+      stabilizing: 'Stabilising',
+      active: 'Active',
+      suspended: 'Suspended',
+    };
+    const observationTextMap = {
+      accepted: 'Accepted',
+      rejected: 'Rejected',
+      invalid: 'Invalid',
+      skipped: 'Skipped',
+    };
+    const reasonTextMap = {
+      manual: 'Manual toggle off',
+      startup: 'Startup stabilising window',
+      observation_reset: 'Recent rejected or invalid observation',
+      nav_state_change: 'navigation.state changed',
+      nav_state: 'Blocked by navigation.state',
+      cog_override: 'Blocked by COG override',
+      accepted: 'Observation recorded',
+      estimator_outlier: 'Estimator rejected observation',
+      missing_input: 'Required learning input unavailable',
+      missing_current_when_required: 'Current estimate unavailable',
+      learning_off: 'Learning is off',
+      stabilizing: 'Stabilising window active',
+      nav_state_blocked: 'Learning blocked by navigation.state',
+      cog_override_active: 'Learning blocked by COG override',
+      stw_below_threshold: 'Below minimum STW for learning',
+      sog_below_threshold: 'Below minimum SOG for learning',
+    };
+    const learningText = learningTextMap[learningState?.state] || '\u2014';
+    const obsText = observationTextMap[learningState?.observationState] || '\u2014';
+    const reason = reasonTextMap[learningState?.observationReason]
+      || reasonTextMap[learningState?.reason]
+      || '\u2014';
     statusTbody.innerHTML =
-      `<tr><td class="text-muted small">Learning</td><td class="small fw-bold ${learningClass}">${learningText}</td></tr>` +
-      `<tr><td class="text-muted small">Observation</td><td class="small fw-bold ${obsClass}">${obsText}</td></tr>`;
+        `<tr><td class="text-muted small">Learning</td><td class="small">${learningText}</td></tr>` +
+        `<tr><td class="text-muted small">Observation</td><td class="small">${obsText}</td></tr>` +
+      `<tr><td class="text-muted small">Reason</td><td class="small">${reason}</td></tr>`;
   }
   // Correction table
   const tableEl = document.getElementById('table-container');
@@ -642,9 +670,11 @@ async function tick() {
     }
     lastTickOk = true;
     normaliseState(data);
+    state.learningState = data.learningState || null;
     renderLiveSections();
   } else {
     lastTickOk = false;
+    state.learningState = null;
   }
   // Always poll status separately so the message reflects plugin state
   // even when /api/report fails (plugin stopped/restarting).
