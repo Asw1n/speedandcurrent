@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
+## [2.3.1] - 2026-08-18
+
+### Fixed
+- Signal K admin styling now loads from standalone CSS records in current Vite manifests while retaining support for entry-associated CSS and older server fallbacks.
+
 ## [2.3.0] - 2026-08-16
 
 ### Added
