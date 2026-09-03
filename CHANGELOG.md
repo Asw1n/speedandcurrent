@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
+## [2.3.2] - 2026-09-04
+
+### Fixed
+- Updated `signalkutilities` to 3.1.1, so an input that goes silent *after* having delivered data is now detected and resubscribed. Previously recovery only ran for subscriptions that had never received a delta, meaning an upstream outage after a healthy start could leave the plugin dead until it was restarted.
+
 ## [2.3.1] - 2026-08-18
 
 ### Fixed
