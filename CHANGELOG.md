@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ### Fixed
+- `navigation.leewayAngle` no longer reports a correction-table artifact when the vessel is stationary. The lateral component of the table correction is now suppressed below the table speed step and while `navigation.state` is `anchored` or `moored`, so leeway is published as 0 instead of an angle derived from a near-zero speed. The longitudinal speed correction, and leeway while motoring, are unaffected.
 - Updated `signalkutilities` to 3.1.2, which completes the 3.1.1 recovery fix for polar-backed inputs. Smoothed heading and the ground-speed vector are built on `Polar`/`PolarSmoother`, where the idle timer was still cleared rather than re-armed on each delta, so those inputs did not recover after going silent following a healthy start.
 
 ## [2.3.2] - 2026-09-04

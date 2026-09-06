@@ -453,6 +453,43 @@ describe('learning gate helpers', () => {
   });
 });
 
+describe('leeway gate', () => {
+  const helpers = require('../index.js')._test;
+  const underway = { state: { ready: true }, value: 'sailing' };
+
+  it('suppresses leeway below the speed-step threshold', () => {
+    assert.strictEqual(helpers.isLeewayValid(0.04, 0.5, underway), false);
+  });
+
+  it('allows leeway at or above the speed-step threshold', () => {
+    assert.strictEqual(helpers.isLeewayValid(0.5, 0.5, underway), true);
+  });
+
+  it('suppresses leeway when anchored even above the speed threshold', () => {
+    const anchored = { state: { ready: true }, value: 'anchored' };
+    assert.strictEqual(helpers.isLeewayValid(2, 0.5, anchored), false);
+  });
+
+  it('suppresses leeway when moored', () => {
+    const moored = { state: { ready: true }, value: 'Moored' };
+    assert.strictEqual(helpers.isLeewayValid(2, 0.5, moored), false);
+  });
+
+  it('allows leeway when motoring, which only gates learning', () => {
+    const motoring = { state: { ready: true }, value: 'motoring' };
+    assert.strictEqual(helpers.isLeewayValid(2, 0.5, motoring), true);
+  });
+
+  it('allows leeway when navigation.state is unavailable', () => {
+    assert.strictEqual(helpers.isLeewayValid(2, 0.5, null), true);
+    assert.strictEqual(helpers.isLeewayValid(2, 0.5, { state: { ready: false }, value: null }), true);
+  });
+
+  it('suppresses leeway for non-finite speed', () => {
+    assert.strictEqual(helpers.isLeewayValid(NaN, 0.5, underway), false);
+  });
+});
+
 describe('plugin lifecycle', () => {
   it('start() completes without throwing', () => {
     const { app, cleanup } = createAppShim();

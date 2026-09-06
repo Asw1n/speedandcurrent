@@ -39,6 +39,17 @@ function isCogOverrideActive(groundSpeedPolar, speedThreshold) {
     && sogHandler.value < speedThreshold;
 }
 
+/**
+ * Leeway is the angle of the corrected boatspeed vector, so a small lateral
+ * correction divided by a near-zero magnitude yields a large, meaningless angle.
+ */
+function isLeewayValid(speed, speedThreshold, navigationStateHandler) {
+  if (!(speed >= speedThreshold)) return false;
+  const state = navigationStateHandler?.state;
+  if (state?.ready !== true) return true;
+  return !ALWAYS_BLOCKING_NAVIGATION_STATES.has(normalizeNavigationState(navigationStateHandler.value));
+}
+
 function evaluateLearningMode({ options = {}, navigationState, stabilizingUntil = 0, stabilizingReason = null, now = Date.now() }) {
   const normalizedNavigationState = normalizeNavigationState(navigationState?.value);
   const navigationGateReady = navigationState?.ready === true;
@@ -833,7 +844,11 @@ module.exports = function (app) {
     else if (rawAttitude.ready) {
       if (correctedBoatSpeed.magnitude > 0) {
         const { correction, variance } = table.getCorrection(correctedBoatSpeed.magnitude, rawAttitude.value?.roll);
-        speedCorrection.setVectorValue(correction, variance);
+        const leewayValid = isLeewayValid(correctedBoatSpeed.magnitude, minSpeed, navigationStateHandler);
+        speedCorrection.setVectorValue(
+          { x: correction.x, y: leewayValid ? correction.y : 0 },
+          { x: variance.x, y: leewayValid ? variance.y : 0 }
+        );
         correctedBoatSpeed.add(speedCorrection);
       }
       // Current estimation and residual also require heading (to rotate into ground frame).
@@ -1050,6 +1065,7 @@ module.exports._test = {
   getShortStabilizingMs,
   evaluateLearningMode,
   isCogOverrideActive,
+  isLeewayValid,
   evaluateObservationGate,
   getDerivedObservationStatus,
   buildNavigationStateStatus,
