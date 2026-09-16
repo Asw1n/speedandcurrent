@@ -97,7 +97,6 @@ function normaliseState(data) {
 
 // ─── Static meta (fetched once at startup from /api/meta) ─────────────────────
 let metaById = {}; // keyed by item id
-let lifecycleWarnings = [];
 
 async function loadMeta() {
   const data = await apiGet('/api/meta');
@@ -117,90 +116,99 @@ async function loadMeta() {
   applyUnitLabels();
 }
 
-function isStale(item) {
-  if (!item) return true;
-  return item.state?.isStale === true;
+const computedItemIds = new Set([
+  'current.smoothed', 'boatSpeedRefGround', 'speedCorrection',
+  'correctedBoatSpeed', 'residual', 'residual.smoothed'
+]);
+
+function getPathStatus(pathState, hasValue, computed = false, computedReady = false) {
+  if (computed) {
+    return hasValue && computedReady
+      ? { category: 'computed', reason: '' }
+      : { category: 'inactive', reason: 'not computed' };
+  }
+  if (pathState?.subscribed === false) {
+    return { category: 'inactive', reason: 'not subscribed' };
+  }
+  if (hasValue && pathState?.ready === true) {
+    return { category: 'subscribed', reason: '' };
+  }
+  if (!pathState) {
+    return { category: 'problem', reason: 'not available' };
+  }
+  if (pathState.pathKnown === false) {
+    return { category: 'problem', reason: 'path not found in Signal K' };
+  }
+  if (pathState.hasDelta === false) {
+    return { category: 'problem', reason: 'waiting for first data' };
+  }
+  if (pathState.isStale === true) {
+    return { category: 'problem', reason: 'data is stale' };
+  }
+  return { category: 'problem', reason: 'not available' };
 }
 
-function isNotReady(item) {
-  if (!item) return true;
-  return item.state?.ready !== true;
+function getScalarPathState(state) {
+  if (!state?.handler) return state;
+  return {
+    ...state,
+    subscribed: state.handler.subscribed,
+    pathKnown: state.handler.pathKnown,
+    hasDelta: state.hasDelta === true && state.handler.hasDelta === true,
+    isStale: state.isStale === true || state.handler.isStale === true,
+    ready: state.ready === true && state.handler.ready === true
+  };
 }
 
-// Returns a human-readable reason why an item is not ready.
-// Handles three state shapes:
-//   handler-nested  (MessageSmoother, SmoothedAngle):  state.handler.*
-//   magnitude/angle (PolarSmoother):                   state.magnitude.* / state.angle.*
-//   flat top-level  (MessageHandler, Polar):           state.*
-function getNotReadyReason(item) {
-  if (!item) return 'not available';
-  const s = item.state;
-  if (!s) return 'not available';
-
-  let subscribed, pathKnown;
-  if (s.handler !== undefined) {
-    subscribed = s.handler.subscribed;
-    pathKnown  = s.handler.pathKnown;
-  } else if (s.magnitude !== undefined || s.angle !== undefined) {
-    const mag = s.magnitude, ang = s.angle;
-    subscribed = (mag?.subscribed !== false) && (ang?.subscribed !== false);
-    pathKnown  = (mag?.pathKnown  !== false) && (ang?.pathKnown  !== false);
-  } else {
-    subscribed = s.subscribed;
-    pathKnown  = s.pathKnown;
+function getItemStatuses(item) {
+  const label = itemLabel(item);
+  const computed = computedItemIds.has(item.id);
+  const computedReady = item.state?.ready === true;
+  if (state.polarsById[item.id] === item) {
+    return [
+      {
+        label: `${label} magnitude`,
+        status: getPathStatus(item.state?.magnitude, Number.isFinite(item.magnitude), computed, computedReady)
+      },
+      {
+        label: `${label} angle`,
+        status: getPathStatus(
+          item.state?.angle,
+          Number.isFinite(item.angle),
+          computed || item.state?.angleFallbackActive === true,
+          computedReady
+        )
+      }
+    ];
   }
 
-  if (subscribed === false) return 'not subscribed to Signal K';
-  if (pathKnown  === false) return 'path not found in Signal K';
-  if (!s.hasDelta)          return 'waiting for first data';
-  if (s.isStale)            return 'data is stale';
-  return 'not available';
+  const pathState = getScalarPathState(item.state);
+  const hasValue = state.attitudesById[item.id] === item
+    ? Number.isFinite(item.value?.roll) || Number.isFinite(item.value?.pitch)
+    : Number.isFinite(item.value);
+  return [{ label, status: getPathStatus(pathState, hasValue, computed, computedReady) }];
 }
 
-function getAnyItem(id) {
-  return state.polarsById[id] || state.deltasById[id] || state.attitudesById[id] || null;
+function isAvailableStatus(status) {
+  return status.category === 'subscribed' || status.category === 'computed';
 }
 
-function renderWarnings(elId, ids) {
+function renderWarnings(elId, items) {
   const el = document.getElementById(elId);
   if (!el) return;
   el.innerHTML = '';
-  const notReady = ids.filter(id => isNotReady(getAnyItem(id)));
-  if (notReady.length === 0) return;
+  const problems = items.flatMap(item => getItemStatuses(item))
+    .filter(({ status }) => status.category === 'problem');
+  if (problems.length === 0) return;
   const h = document.createElement('h6');
   h.className = 'text-uppercase fw-bold text-muted border-bottom pb-1 mt-3 mb-1 small';
   h.textContent = 'Warnings';
   el.appendChild(h);
   const ul = document.createElement('ul');
   ul.className = 'list-unstyled text-danger small ps-3';
-  notReady.forEach(id => {
-    const item = getAnyItem(id);
-    const label = metaById[id]?.displayName ?? id;
+  problems.forEach(({ label, status }) => {
     const li = document.createElement('li');
-    li.textContent = `"${label}" — ${getNotReadyReason(item)}`;
-    ul.appendChild(li);
-  });
-  el.appendChild(ul);
-}
-
-function renderInputWarnings(elId, ids) {
-  const el = document.getElementById(elId);
-  if (!el) return;
-  el.innerHTML = '';
-  const lines = [];
-  lifecycleWarnings.forEach(w => {
-    if (w && typeof w.message === 'string') lines.push(w.message);
-  });
-  if (lines.length === 0) return;
-  const h = document.createElement('h6');
-  h.className = 'text-uppercase fw-bold text-muted border-bottom pb-1 mt-3 mb-1 small';
-  h.textContent = 'Warnings';
-  el.appendChild(h);
-  const ul = document.createElement('ul');
-  ul.className = 'list-unstyled text-danger small ps-3';
-  lines.forEach(line => {
-    const li = document.createElement('li');
-    li.textContent = line;
+    li.textContent = `"${label}" — ${status.reason}`;
     ul.appendChild(li);
   });
   el.appendChild(ul);
@@ -447,18 +455,24 @@ function renderSettingsPanel() {
 
 function formatPolarValue(p) {
   if (!p) return '—';
+  const statuses = getItemStatuses(p);
   const m = metaById[p.id];
   const speedC = buildConverter(m?.magnitude?.displayUnits) || DEFAULTS.speed;
   const angleC = buildConverter(m?.angle?.displayUnits)     || DEFAULTS.angle;
-  const spd = typeof p.magnitude === 'number' ? speedC.convert(p.magnitude).toFixed(speedC.decimals) : '—';
-  const ang = typeof p.angle    === 'number' ? angleC.convert(p.angle).toFixed(angleC.decimals)      : '—';
-  const sigma = (config?.showStatistics && p.id.endsWith('.smoothed') && typeof p.trace === 'number')
+  const spd = isAvailableStatus(statuses[0].status)
+    ? `${speedC.convert(p.magnitude).toFixed(speedC.decimals)} ${speedC.symbol}`
+    : statuses[0].status.reason;
+  const ang = isAvailableStatus(statuses[1].status)
+    ? `${angleC.convert(p.angle).toFixed(angleC.decimals)}${angleC.symbol}`
+    : statuses[1].status.reason;
+  const sigma = (isAvailableStatus(statuses[0].status) && config?.showStatistics && p.id.endsWith('.smoothed') && typeof p.trace === 'number')
     ? ` (σ=${speedC.convert(Math.sqrt(p.trace)).toFixed(speedC.decimals + 2)})` : '';
-  return `${spd} ${speedC.symbol} / ${ang}${angleC.symbol}${sigma}`;
+  return `${spd}${sigma} / ${ang}`;
 }
 
 function formatDeltaValue(d) {
-  if (!d || typeof d.value !== 'number') return '—';
+  const status = getItemStatuses(d)[0].status;
+  if (!isAvailableStatus(status)) return status.reason;
   const m = metaById[d.id];
   const uc = buildConverter(m?.displayUnits)
     || (m?.units === 'm/s' ? DEFAULTS.speed : DEFAULTS.angle);
@@ -468,6 +482,8 @@ function formatDeltaValue(d) {
 }
 
 function formatAttitudeValue(a) {
+  const status = getItemStatuses(a)[0].status;
+  if (!isAvailableStatus(status)) return status.reason;
   const v = (a && a.value) || {};
   const variance = a && a.variance;
   const m = metaById[a?.id];
@@ -490,7 +506,6 @@ function buildDataTable(rows) {
   const tbody = document.createElement('tbody');
   rows.forEach(row => {
     const tr = document.createElement('tr');
-    if (row.stale) tr.className = 'stale';
     const tdL = document.createElement('td'); tdL.textContent = row.label;
     const tdV = document.createElement('td'); tdV.textContent = row.value;
     tr.appendChild(tdL); tr.appendChild(tdV);
@@ -518,9 +533,9 @@ function renderGroupInto(elId, polars, deltas, attitudes) {
   if (!el) return;
   el.innerHTML = '';
   const rows = [
-    ...polars   .map(p => ({ label: itemLabel(p), value: formatPolarValue(p),    stale: isNotReady(p) })),
-    ...deltas   .map(d => ({ label: itemLabel(d), value: formatDeltaValue(d),    stale: isNotReady(d) })),
-    ...attitudes.map(a => ({ label: itemLabel(a), value: formatAttitudeValue(a), stale: isNotReady(a) }))
+    ...polars   .map(p => ({ label: itemLabel(p), value: formatPolarValue(p) })),
+    ...deltas   .map(d => ({ label: itemLabel(d), value: formatDeltaValue(d) })),
+    ...attitudes.map(a => ({ label: itemLabel(a), value: formatAttitudeValue(a) }))
   ];
   if (rows.length) el.appendChild(buildDataTable(rows));
 }
@@ -533,6 +548,7 @@ function renderLiveSections() {
   const fallbackInputPolars = inputPolars.length ? inputPolars : filterById(state.polarsAll, ['groundSpeed.smoothed']);
   const fallbackInputDeltas = inputDeltas.length ? inputDeltas : filterById(state.deltasAll, ['heading.smoothed', 'boatSpeed.smoothed']);
   const fallbackInputAttitudes = inputAttitudes.length ? inputAttitudes : filterById(state.attitudesAll, ['attitude.smoothed']);
+  const displayedInputs = [...fallbackInputPolars, ...fallbackInputDeltas, ...fallbackInputAttitudes];
 
   // Inputs section — raw sensor readings only (smoothing is internal to the plugin)
   renderGroupInto('inputs-values',
@@ -540,43 +556,44 @@ function renderLiveSections() {
     fallbackInputDeltas,
     fallbackInputAttitudes
   );
-  const inputWarningIds = ['boatSpeed', 'attitude', 'heading.angle', 'groundSpeed', 'boatSpeed.smoothed', 'groundSpeed.smoothed', 'heading.smoothed', 'attitude.smoothed'];
-  if (config && config.assumeCurrent) inputWarningIds.push('current.smoothed');
-  renderInputWarnings('inputs-warnings', inputWarningIds);
+  renderWarnings('inputs-warnings', displayedInputs);
 
   // Estimation — inputs (raw sensor data used for boat speed estimation)
+  const estimationInputs = [
+    ...filterById(state.polarsAll,    ['groundSpeed']),
+    ...filterById(state.deltasAll,    ['heading.angle', 'boatSpeed']),
+    ...filterById(state.attitudesAll, ['attitude'])
+  ];
   renderGroupInto('estimation-inputs',
-    filterById(state.polarsAll,    ['groundSpeed']),
-    filterById(state.deltasAll,    ['heading.angle', 'boatSpeed']),
-    filterById(state.attitudesAll, ['attitude'])
+    estimationInputs.filter(item => state.polarsById[item.id] === item),
+    estimationInputs.filter(item => state.deltasById[item.id] === item),
+    estimationInputs.filter(item => state.attitudesById[item.id] === item)
   );
   // Estimation — intermediates
-  renderGroupInto('estimation-intermediates',
-    filterById(state.polarsAll, ['boatSpeedRefGround', 'speedCorrection', 'residual', 'residual.smoothed']),
-    [], []
-  );
+  const estimationIntermediates = filterById(state.polarsAll, ['boatSpeedRefGround', 'speedCorrection', 'residual', 'residual.smoothed']);
+  renderGroupInto('estimation-intermediates', estimationIntermediates, [], []);
   // Estimation — outputs
-  renderGroupInto('estimation-outputs',
-    filterById(state.polarsAll, ['correctedBoatSpeed', 'current.smoothed']),
-    [], []
-  );
+  const estimationOutputs = filterById(state.polarsAll, ['correctedBoatSpeed', 'current.smoothed']);
+  renderGroupInto('estimation-outputs', estimationOutputs, [], []);
   // Estimation — warnings
-  const estimationWarnings = document.getElementById('estimation-warnings');
-  if (estimationWarnings) estimationWarnings.innerHTML = '';
+  renderWarnings('estimation-warnings', [...estimationInputs, ...estimationIntermediates, ...estimationOutputs]);
 
   // Learning — inputs: smoothed sensors + current if assumeCurrent
   const learningCurrentPolars = (config && config.assumeCurrent)
     ? filterById(state.polarsAll, ['current.smoothed'])
     : [];
+  const learningPolars = [...filterById(state.polarsAll, ['groundSpeed.smoothed']), ...learningCurrentPolars];
+  const learningDeltas = filterById(state.deltasAll, ['heading.smoothed', 'boatSpeed.smoothed']);
+  const learningAttitudes = filterById(state.attitudesAll, ['attitude.smoothed']);
   renderGroupInto('learning-inputs',
-    [...filterById(state.polarsAll, ['groundSpeed.smoothed']), ...learningCurrentPolars],
-    filterById(state.deltasAll,    ['heading.smoothed', 'boatSpeed.smoothed']),
-    filterById(state.attitudesAll, ['attitude.smoothed'])
+    learningPolars,
+    learningDeltas,
+    learningAttitudes
   );
   // Learning — warnings
   const learningWarnings = document.getElementById('learning-warnings');
+  renderWarnings('learning-warnings', [...learningPolars, ...learningDeltas, ...learningAttitudes]);
   if (learningWarnings) {
-    learningWarnings.innerHTML = '';
     const navState = learningState?.navigationState;
     if (navState?.enabled && navState.pathKnown === false) {
       const ul = document.createElement('ul');
@@ -675,7 +692,6 @@ async function tick() {
     .then(r => r.ok ? r.json() : null)
     .catch(() => null);
   _pluginStatus = statusData?.status ?? '';
-  lifecycleWarnings = Array.isArray(statusData?.lifecycleWarnings) ? statusData.lifecycleWarnings : [];
   _refreshMessage();
 }
 
