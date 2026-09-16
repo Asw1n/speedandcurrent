@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+- Attitude roll handling now treats incomplete or stale values as invalid during correction-table learning, preventing fabricated heel-based corrections while the input is not yet usable.
+
 ## [2.3.3] - 2026-09-06
 
 ### Fixed

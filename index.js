@@ -327,6 +327,8 @@ module.exports = function (app) {
     const safePath = path || 'unknown path';
     const message = status === 'idle'
       ? `Input ${id} is idle on ${safePath}; resubscribing`
+      : status === 'incomplete'
+      ? `Input ${id} is missing ${safePath}`
       : `Input ${id} is stale on ${safePath}`;
     lifecycleWarningMap.set(id, {
       id,
@@ -841,7 +843,8 @@ module.exports = function (app) {
     if (options.sogFallback && rawGroundSpeed.ready && rawBoatSpeed.ready && rawBoatSpeed.value === 0 && rawGroundSpeed.magnitude >= minSpeed) {
         correctedBoatSpeed.setVectorValue({ x: rawGroundSpeed.magnitude, y: 0 });
     }
-    else if (rawAttitude.ready) {
+    else if (rawAttitude.ready && Number.isFinite(rawAttitude.value?.roll)) {
+      clearLifecycleWarning('attitude.roll');
       if (correctedBoatSpeed.magnitude > 0) {
         const { correction, variance } = table.getCorrection(correctedBoatSpeed.magnitude, rawAttitude.value?.roll);
         const leewayValid = isLeewayValid(correctedBoatSpeed.magnitude, minSpeed, navigationStateHandler);
@@ -877,7 +880,10 @@ module.exports = function (app) {
         }
       }
     }
-    // Implicit fallback: attitude not ready — correctedBoatSpeed = raw STW, no correction
+    // Implicit fallback: attitude not ready or missing roll — correctedBoatSpeed = raw STW, no correction
+    else if (rawAttitude.ready) {
+      setLifecycleWarning('attitude.roll', 'incomplete', 'navigation.attitude.roll');
+    }
 
     PolarSmoother.send(app, plugin.id, [smoothedCurrent, smoothedResidual]);
 
@@ -902,7 +908,8 @@ module.exports = function (app) {
       learningMode.state = 'suspended';
       learningMode.reason = 'cog_override';
     }
-    const inputsReady = smoothedAttitude.ready && smoothedBoatSpeed.ready && smoothedHeading.ready && smoothedGroundSpeed.ready;
+    const inputsReady = smoothedAttitude.ready && Number.isFinite(smoothedAttitude.value?.roll)
+      && smoothedBoatSpeed.ready && smoothedHeading.ready && smoothedGroundSpeed.ready;
     const currentReady = !options.assumeCurrent || smoothedCurrent.ready;
     const observationGate = evaluateObservationGate({
       learningMode,
@@ -916,6 +923,7 @@ module.exports = function (app) {
 
     if (observationGate.state !== 'pending') {
       if (observationGate.state === 'invalid') {
+        setObservationStatus('rejected', observationGate.reason);
         resetLearningStabilization('observation_reset', getShortStabilizingMs(options));
       }
       return;

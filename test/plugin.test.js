@@ -490,6 +490,101 @@ describe('leeway gate', () => {
   });
 });
 
+describe('attitude guard clauses (missing spec sub-property)', () => {
+  /**
+   * App shim variant that tracks per-path subscribers so tests can push deltas,
+   * mirroring the pattern used in advancedWind's test suite.
+   */
+  function createDeliveringShim(pluginOptions = {}) {
+    const { app: base, cleanup } = createAppShim();
+    const subscribers = new Map();
+
+    const app = new Proxy(base, {
+      get(target, prop) {
+        if (prop === 'subscriptionmanager') {
+          return {
+            subscribe(msg, unsubscribes, _err, deltaCb) {
+              for (const s of (msg.subscribe || [])) {
+                if (!subscribers.has(s.path)) subscribers.set(s.path, new Set());
+                subscribers.get(s.path).add(deltaCb);
+              }
+              const unsub = () => {
+                for (const s of (msg.subscribe || [])) subscribers.get(s.path)?.delete(deltaCb);
+              };
+              if (Array.isArray(unsubscribes)) unsubscribes.push(unsub);
+            },
+          };
+        }
+        if (prop === 'readPluginOptions') return () => ({ configuration: pluginOptions });
+        if (prop in target) return target[prop];
+        if (typeof prop === 'symbol') return undefined;
+        return () => {};
+      },
+    });
+
+    return { app, cleanup, subscribers };
+  }
+
+  function deliverDelta(subscribers, values, source = 'test') {
+    const delta = { updates: [{ $source: source, values }] };
+    for (const entry of values) {
+      const cbs = subscribers.get(entry.path);
+      if (cbs) for (const cb of [...cbs]) cb(delta);
+    }
+  }
+
+  it('skips speed correction and rejects the learning observation when attitude.roll was never sampled', () => {
+    const { app, cleanup, subscribers } = createDeliveringShim({
+      estimateBoatSpeed: true,
+      updateCorrectionTable: true,
+    });
+    let plugin;
+    // The plugin opens a 60s startup stabilization window on start(). Shift Date.now()
+    // forward (after start() computes it) so updateTable() sees learning as active,
+    // without actually waiting 60s of real time.
+    const realDateNow = Date.now.bind(Date);
+    let shiftMs = 0;
+    Date.now = () => realDateNow() + shiftMs;
+    try {
+      plugin = require('../index.js')(app);
+      plugin.start();
+      shiftMs = 61_000;
+
+      const routes = {};
+      plugin.registerWithRouter({
+        get: (p, h) => { routes[`GET ${p}`] = h; },
+        put: (p, h) => { routes[`PUT ${p}`] = h; },
+        post: (p, h) => { routes[`POST ${p}`] = h; },
+      });
+
+      // Attitude delta never includes roll — pitch/yaw arrive, roll never does.
+      deliverDelta(subscribers, [{ path: 'navigation.attitude', value: { pitch: 0.01, yaw: 0.02 } }]);
+      deliverDelta(subscribers, [{ path: 'navigation.headingTrue', value: 1.0 }]);
+      deliverDelta(subscribers, [{ path: 'navigation.speedOverGround', value: 3.0 }]);
+      deliverDelta(subscribers, [{ path: 'navigation.courseOverGroundTrue', value: 1.0 }]);
+      deliverDelta(subscribers, [{ path: 'navigation.speedThroughWater', value: 3.0 }]);
+
+      // The rejected observation opens its own short (default 5s) stabilizing cooldown,
+      // which would otherwise mask the display as 'skipped'/'stabilizing'. Shift past it too.
+      shiftMs += 6_000;
+
+      let statusResponse = null;
+      routes['GET /api/status']({}, { json: (d) => { statusResponse = d; } });
+
+      assert.ok(statusResponse, 'expected a /api/status response');
+      const rollWarning = statusResponse.lifecycleWarnings.find(w => w.id === 'attitude.roll');
+      assert.ok(rollWarning, 'expected a lifecycle warning for missing attitude.roll');
+
+      assert.strictEqual(statusResponse.learningState.observationState, 'rejected');
+      assert.strictEqual(statusResponse.learningState.observationReason, 'missing_input');
+    } finally {
+      Date.now = realDateNow;
+      if (plugin) plugin.stop?.();
+      cleanup();
+    }
+  });
+});
+
 describe('plugin lifecycle', () => {
   it('start() completes without throwing', () => {
     const { app, cleanup } = createAppShim();
