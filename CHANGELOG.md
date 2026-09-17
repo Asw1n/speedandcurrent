@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ### Fixed
+- Boat-speed startup now preserves synchronously replayed cached values, avoids restart errors, and keeps current estimation behind the startup stabilization period regardless of table-learning settings.
 - Attitude roll handling now treats incomplete or stale values as invalid during correction-table learning, preventing fabricated heel-based corrections while the input is not yet usable.
 - Webapp values and warnings now share per-path lifecycle status, distinguish subscribed and computed data, report polar magnitude and angle independently, and show stale raw inputs consistently across all pages.
 

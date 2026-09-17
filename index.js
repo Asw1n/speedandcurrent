@@ -634,7 +634,7 @@ module.exports = function (app) {
       app, pluginId: plugin.id,
       id: 'boatSpeed',
       path: 'navigation.speedThroughWater',
-      subscribe: true,
+      subscribe: false,
       SmootherClass,
       smootherOptions,
       onDelta: () => {
@@ -650,7 +650,7 @@ module.exports = function (app) {
           now: Date.now()
         });
 
-        const wellUnderway = learningMode.state !== 'stabilizing';
+        const wellUnderway = Date.now() >= learningStabilizingUntil;
         setStatus(learningMode.state === 'stabilizing' ? 'Stabilizing' : 'Running');
         if (options.estimateBoatSpeed) correct(wellUnderway);
         updateTable();
@@ -768,6 +768,7 @@ module.exports = function (app) {
     lastNavigationStateValue = normalizeNavigationState(navigationStateHandler?.value);
     resetLearningStabilization('startup', LONG_STABILIZING_MS);
     setStatus('Running');
+    smoothedBoatSpeed.subscribe();
     app.debug("Running");
 
   }

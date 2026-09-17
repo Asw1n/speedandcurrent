@@ -625,6 +625,41 @@ describe('plugin lifecycle', () => {
     }
   });
 
+  it('survives a cached speed value replayed synchronously during start and restart', async () => {
+    const { app: base, cleanup } = createAppShim();
+    const cachedValue = 3;
+    const app = new Proxy(base, {
+      get(target, prop) {
+        if (prop === 'subscriptionmanager') {
+          return {
+            subscribe(msg, unsubscribes, _errorCb, deltaCb) {
+              if (Array.isArray(unsubscribes)) unsubscribes.push(() => {});
+              for (const entry of msg.subscribe || []) {
+                if (entry.path === 'navigation.speedThroughWater') {
+                  deltaCb({
+                    context: 'vessels.self',
+                    updates: [{ values: [{ path: entry.path, value: cachedValue }] }],
+                  });
+                }
+              }
+            },
+          };
+        }
+        return target[prop];
+      },
+    });
+
+    try {
+      const plugin = require('../index.js')(app);
+      assert.doesNotThrow(() => plugin.start(), 'first start() must not throw');
+      await plugin.stop();
+      assert.doesNotThrow(() => plugin.start(), 'second start() must not throw');
+      await assert.doesNotReject(() => plugin.stop(), 'second stop() must resolve');
+    } finally {
+      cleanup();
+    }
+  });
+
   it('GET /api/status reports isRunning=true after start()', async () => {
     const { app, cleanup } = createAppShim();
     try {
