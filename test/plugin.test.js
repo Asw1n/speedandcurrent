@@ -586,6 +586,26 @@ describe('attitude guard clauses (missing spec sub-property)', () => {
 });
 
 describe('plugin lifecycle', () => {
+  it('does not publish current when estimation is disabled', () => {
+    const { app, cleanup } = createAppShim();
+    const messages = [];
+    app.handleMessage = (...args) => messages.push(args);
+    let plugin;
+    try {
+      plugin = require('../index.js')(app);
+      plugin.start();
+
+      const currentValues = messages.flatMap(([, message]) =>
+        (message?.updates || []).flatMap(update => update.values || [])
+      ).filter(({ path }) => path === 'environment.current.drift' || path === 'environment.current.setTrue');
+
+      assert.deepStrictEqual(currentValues, [], 'disabled estimation must not publish current');
+    } finally {
+      if (plugin) plugin.stop();
+      cleanup();
+    }
+  });
+
   it('start() completes without throwing', () => {
     const { app, cleanup } = createAppShim();
     let plugin;
