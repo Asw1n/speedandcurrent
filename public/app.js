@@ -555,6 +555,21 @@ function renderGroupInto(elId, polars, deltas, attitudes, extraRows = []) {
   if (rows.length) el.appendChild(buildDataTable(rows));
 }
 
+function renderItemsInto(elId, items) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.innerHTML = '';
+  const rows = items.map(item => ({
+    label: itemLabel(item),
+    value: state.polarsById[item.id] === item
+      ? formatPolarValue(item)
+      : state.deltasById[item.id] === item
+        ? formatDeltaValue(item)
+        : formatAttitudeValue(item)
+  }));
+  if (rows.length) el.appendChild(buildDataTable(rows));
+}
+
 function renderLiveSections() {
   const learningState = state.learningState || null;
   const inputPolars = filterById(state.polarsAll, ['groundSpeed']);
@@ -576,16 +591,16 @@ function renderLiveSections() {
   renderWarnings('inputs-warnings', displayedInputs);
 
   // Estimation — inputs (raw sensor data used for boat speed estimation)
-  const estimationInputs = [
-    ...filterById(state.polarsAll,    ['groundSpeed']),
-    ...filterById(state.deltasAll,    ['heading.angle', 'boatSpeed']),
+  const groundSpeedInputs = filterById(state.polarsAll, ['groundSpeed']);
+  const boatSpeedInputs = filterById(state.deltasAll, ['boatSpeed']);
+  const estimationInputs = config?.sogFallback
+    ? [...groundSpeedInputs, ...boatSpeedInputs]
+    : [...boatSpeedInputs, ...groundSpeedInputs];
+  estimationInputs.push(
+    ...filterById(state.deltasAll, ['heading.angle']),
     ...filterById(state.attitudesAll, ['attitude'])
-  ];
-  renderGroupInto('estimation-inputs',
-    estimationInputs.filter(item => state.polarsById[item.id] === item),
-    estimationInputs.filter(item => state.deltasById[item.id] === item),
-    estimationInputs.filter(item => state.attitudesById[item.id] === item)
   );
+  renderItemsInto('estimation-inputs', estimationInputs);
   // Estimation — intermediates
   const estimationIntermediates = filterById(state.polarsAll, ['boatSpeedRefGround', 'speedCorrection', 'residual', 'residual.smoothed']);
   renderGroupInto('estimation-intermediates', estimationIntermediates, [], []);

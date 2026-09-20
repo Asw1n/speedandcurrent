@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Correction estimates now fuse mature nearby table cells using their full covariance and normalized distance, with an automatically estimated spatial variance, a two-cell search radius, and fusion-weight diagnostics in the webapp.
 
 ### Fixed
+- The boat-speed estimation inputs now prioritize Boatspeed unless groundspeed fallback is selected, and the correction table marks its most recently updated cell with a thin black border reflected in the legend.
 - The learning status Reason row is now hidden when the last observation was accepted, instead of showing a redundant "Observation recorded" message.
 - `navigation.state` no longer misreports as "not ready" a few seconds after each update; it is an event path that only publishes on transition, so the generic telemetry staleness timer no longer applies to it. The Inputs tab now also displays its current value.
 - Learning and leeway are now gated on the vessel's own SOG-based moving/not-moving state, rather than solely on `navigation.state` freshness. Previously, an infrequent `navigation.state` update could go stale within seconds, silently letting learning continue while anchored or moored. `navigation.state`, when known and `suspendLearningOnNavigationState` is enabled, can still override to "not moving" (anchored/moored/motoring), but can no longer force "moving" against the vessel's own SOG.

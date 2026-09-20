@@ -2,7 +2,7 @@
 // Rows = speed bins (knots), columns = heel bins (degrees).
 // Each learned cell shows factor deviation (±%) and leeway (°).
 // Background encodes factor and leeway; a bottom bar encodes fusion weight.
-// Active cell (last updated) gets blue text.
+// Active cell (last updated) gets a thin black border.
 
 const RAD_TO_DEG = 180 / Math.PI;
 const MPS_TO_KNOTS = 1.943844;
