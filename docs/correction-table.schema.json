@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/meri-imperiumi/speedandcurrent/schema/correction-table.schema.json",
+  "title": "Speed and Current Correction Table",
+  "description": "Documentation of the current private correction-table format emitted by Table2D and CorrectionTable. Table identity is managed by the filename/plugin setting; the serialized id is retained for compatibility.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "row",
+    "col",
+    "parameters",
+    "table"
+    ,"displayAttributes"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "row": {
+      "$ref": "#/$defs/axis",
+      "description": "Speed axis. The row index increases with speed."
+    },
+    "col": {
+      "$ref": "#/$defs/axis",
+      "description": "Heel axis. The column index increases from minimum to maximum heel."
+    },
+    "parameters": {
+      "$ref": "#/$defs/filterParameters"
+    },
+    "table": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "$ref": "#/$defs/cell"
+        }
+      },
+      "description": "Rows must contain one cell for each value on the row axis, and each row must contain one cell for each value on the column axis. Array dimensions are checked semantically because JSON Schema cannot calculate them from axis values."
+    },
+    "displayAttributes": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "axis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max", "step"],
+      "properties": {
+        "min": {
+          "type": "number"
+        },
+        "max": {
+          "type": "number"
+        },
+        "step": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "filterParameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observation", "dynamic"],
+      "properties": {
+        "observation": { "$ref": "#/$defs/observationParameters" },
+        "dynamic": { "$ref": "#/$defs/dynamicParameters" }
+      }
+    },
+    "observationParameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stateProjection", "covariance", "dimension"],
+      "properties": {
+        "stateProjection": { "$ref": "#/$defs/matrix2" },
+        "covariance": { "$ref": "#/$defs/matrix2" },
+        "dimension": { "const": 2 }
+      }
+    },
+    "dynamicParameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transition", "covariance"],
+      "properties": {
+        "transition": { "$ref": "#/$defs/matrix2" },
+        "covariance": { "$ref": "#/$defs/vector2" }
+      }
+    },
+    "matrix2": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        { "$ref": "#/$defs/vector2" },
+        { "$ref": "#/$defs/vector2" }
+      ],
+      "items": false
+    },
+    "cell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/filterState"
+            }
+          ]
+        }
+      }
+    },
+    "filterState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mean",
+        "covariance",
+        "index"
+      ],
+      "properties": {
+        "mean": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/vector1"
+            },
+            {
+              "$ref": "#/$defs/vector1"
+            }
+          ],
+          "items": false,
+          "description": "Two-element column vector."
+        },
+        "covariance": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/vector2"
+            },
+            {
+              "$ref": "#/$defs/vector2"
+            }
+          ],
+          "items": false
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "vector2": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "number"
+      }
+    },
+    "vector1": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "type": "number"
+      }
+    }
+  }
+}

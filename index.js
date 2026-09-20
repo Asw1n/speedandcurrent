@@ -147,7 +147,7 @@ function getDerivedObservationStatus(learningMode, lastState, lastReason) {
 
 module.exports = function (app) {
 
-  const DEFAULT_DIMS = { maxSpeed: 9, speedStep: 1, maxHeel: 32, heelStep: 8 };
+  const DEFAULT_DIMS = { maxSpeed: 10, speedStep: 1, maxHeel: 24, heelStep: 6 };
 
   let options = {};
   let changedOptions = {};
@@ -486,12 +486,25 @@ module.exports = function (app) {
         return res.status(400).json({ error: 'Invalid table name' });
       const filePath = path.join(app.getDataDirPath(), name + '.json');
       const fileData = Table2D.readFromFile(filePath);
-      if (!fileData) return res.status(404).json({ error: `Table '${name}' not found` });
-      const loadedTable = CorrectionTable.fromJSON(fileData, options.stability || 7);
-      loadedTable.setDisplayAttributes({ label: name }); // Table2D API unchanged
-      if (isRunning) swapTable(loadedTable);
-      saveTableName(name);
-      res.json({ name });
+      if (!fileData) {
+        if (!fs.existsSync(filePath)) return res.status(404).json({ error: `Table '${name}' not found` });
+        const message = `Correction table load rejected for ${name}: file could not be read`;
+        app.error(message);
+        app.debug(message);
+        return res.status(422).json({ error: message });
+      }
+      try {
+        const loadedTable = CorrectionTable.fromJSON(fileData, options.stability || 7);
+        loadedTable.setDisplayAttributes({ label: name }); // Table2D API unchanged
+        if (isRunning) swapTable(loadedTable);
+        saveTableName(name);
+        res.json({ name });
+      } catch (err) {
+        const message = `Correction table load rejected for ${name}: ${err.message}`;
+        app.error(message);
+        app.debug(message);
+        res.status(422).json({ error: message });
+      }
     });
 
     // Copy active table under a new name and hot-swap to it
@@ -950,32 +963,43 @@ module.exports = function (app) {
   function loadTable(options, filePath) {
     const stability = (options.stability !== undefined) ? options.stability : 6;
     let fileData = Table2D.readFromFile(filePath);
-    let table;
     if (fileData) {
-      table = CorrectionTable.fromJSON(fileData, stability);
-      app.debug("Correction table loaded: " + (fileData.id || filePath));
-    } else if (fs.existsSync(filePath)) {
-      // File is present but could not be read — transient lock or parse error. Retry once.
-      app.error(`Correction table file exists but could not be read, retrying: ${filePath}`);
-      fileData = Table2D.readFromFile(filePath);
-      if (fileData) {
-        table = CorrectionTable.fromJSON(fileData, stability);
-        app.debug("Correction table loaded on retry: " + (fileData.id || filePath));
-      } else {
-        app.error(`Correction table retry failed — starting with empty table. Disk file preserved: ${filePath}`);
-        const name = options.tableName || 'correctionTable';
-        const row = { min: 0, max: SI.fromKnots(DEFAULT_DIMS.maxSpeed), step: SI.fromKnots(DEFAULT_DIMS.speedStep) };
-        const col = { min: -SI.fromDegrees(DEFAULT_DIMS.maxHeel), max: SI.fromDegrees(DEFAULT_DIMS.maxHeel), step: SI.fromDegrees(DEFAULT_DIMS.heelStep) };
-        table = new CorrectionTable(name, row, col, stability);
+      try {
+        const table = CorrectionTable.fromJSON(fileData, stability);
+        table.setDisplayAttributes({ label: table.id }); // Table2D API unchanged
+        app.debug("Correction table loaded: " + (fileData.id || filePath));
+        return table;
+      } catch (err) {
+        return recoverTable(`could not deserialize ${filePath}: ${err.message}`);
       }
-    } else {
-      const name = options.tableName || 'correctionTable';
-      const row = { min: 0, max: SI.fromKnots(DEFAULT_DIMS.maxSpeed), step: SI.fromKnots(DEFAULT_DIMS.speedStep) };
-      const col = { min: -SI.fromDegrees(DEFAULT_DIMS.maxHeel), max: SI.fromDegrees(DEFAULT_DIMS.maxHeel), step: SI.fromDegrees(DEFAULT_DIMS.heelStep) };
-      table = new CorrectionTable(name, row, col, stability);
-      app.debug("Correction table created: " + name);
     }
-    table.setDisplayAttributes({ label: table.id }); // Table2D API unchanged
+
+    if (fs.existsSync(filePath)) {
+      return recoverTable(`could not read ${filePath}`);
+    }
+
+    const table = createDefaultTable(options.tableName || 'correctionTable', stability);
+    app.debug("Correction table created: " + table.id);
+    return table;
+  }
+
+  function createDefaultTable(name, stability) {
+    const row = { min: 0, max: SI.fromKnots(DEFAULT_DIMS.maxSpeed), step: SI.fromKnots(DEFAULT_DIMS.speedStep) };
+    const col = { min: -SI.fromDegrees(DEFAULT_DIMS.maxHeel), max: SI.fromDegrees(DEFAULT_DIMS.maxHeel), step: SI.fromDegrees(DEFAULT_DIMS.heelStep) };
+    const table = new CorrectionTable(name, row, col, stability);
+    table.setDisplayAttributes({ label: name }); // Table2D API unchanged
+    return table;
+  }
+
+  function recoverTable(reason) {
+    const recoveryName = `correctionTable-${new Date().toISOString().slice(0, 10)}`;
+    const recoveryPath = path.join(app.getDataDirPath(), recoveryName + '.json');
+    const table = createDefaultTable(recoveryName, (options.stability !== undefined) ? options.stability : 6);
+    const message = `Correction table recovery: ${reason}; loaded empty table ${recoveryName}`;
+    app.error(message);
+    app.debug(message);
+    saveTableSync(table, recoveryPath);
+    saveTableName(recoveryName);
     return table;
   }
 

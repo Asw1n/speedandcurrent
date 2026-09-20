@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 - Disabled current estimation no longer publishes a zero-current value during plugin startup.
+- Malformed correction tables now recover safely at startup, while explicit loads reject invalid files without replacing the active table.
 
 ## [2.3.4] - 2026-09-17
 

@@ -326,6 +326,43 @@ describe('registerWithRouter', () => {
     }
   });
 
+  it('POST /api/tables/load keeps the active table when the requested table is malformed', () => {
+    const { app, cleanup } = createAppShim();
+    let plugin;
+    try {
+      app.savePluginOptions({ tableName: 'correctionTable' });
+      plugin = require('../index.js')(app);
+      plugin.start();
+      fs.writeFileSync(
+        path.join(app.getDataDirPath(), 'broken.json'),
+        JSON.stringify({ row: {}, col: {}, table: [null] })
+      );
+
+      const routes = {};
+      const mockRouter = {
+        get:  (p, h) => { routes[`GET ${p}`]  = h; },
+        put:  (p, h) => { routes[`PUT ${p}`]  = h; },
+        post: (p, h) => { routes[`POST ${p}`] = h; },
+      };
+      plugin.registerWithRouter(mockRouter);
+
+      let statusCode = null;
+      let response = null;
+      const res = {
+        status: (code) => { statusCode = code; return res; },
+        json: (data) => { response = data; },
+      };
+      routes['POST /api/tables/load']({ body: { name: 'broken' } }, res);
+
+      assert.strictEqual(statusCode, 422);
+      assert.match(response.error, /load rejected/);
+      assert.strictEqual(app.readPluginOptions().tableName, 'correctionTable');
+    } finally {
+      if (plugin) plugin.stop();
+      cleanup();
+    }
+  });
+
   it('GET /api/status returns isRunning and status fields', () => {
     const { app, cleanup } = createAppShim();
     try {
@@ -612,6 +649,41 @@ describe('plugin lifecycle', () => {
     try {
       plugin = require('../index.js')(app);
       assert.doesNotThrow(() => plugin.start(), 'plugin.start() must not throw');
+    } finally {
+      if (plugin) plugin.stop();
+      cleanup();
+    }
+  });
+
+  it('recovers from a malformed table with a date-named default table', () => {
+    const { app, cleanup } = createAppShim();
+    let plugin;
+    try {
+      app.savePluginOptions({ tableName: 'broken' });
+      fs.writeFileSync(
+        path.join(app.getDataDirPath(), 'broken.json'),
+        JSON.stringify({ row: {}, col: {}, table: [null] })
+      );
+
+      plugin = require('../index.js')(app);
+      assert.doesNotThrow(() => plugin.start(), 'plugin.start() must recover from malformed table data');
+
+      const recoveryName = `correctionTable-${new Date().toISOString().slice(0, 10)}`;
+      const recoveryPath = path.join(app.getDataDirPath(), recoveryName + '.json');
+      const recovery = JSON.parse(fs.readFileSync(recoveryPath, 'utf8'));
+      const savedOptions = app.readPluginOptions();
+      const closeTo = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-12, `${actual} should be close to ${expected}`);
+
+      assert.strictEqual(savedOptions.tableName, recoveryName, 'recovery table must become active');
+      assert.strictEqual(recovery.id, recoveryName);
+      closeTo(recovery.row.max, 10 * 0.5144456333854638);
+      closeTo(recovery.row.step, 0.5144456333854638);
+      closeTo(recovery.col.min, -24 * Math.PI / 180);
+      closeTo(recovery.col.max, 24 * Math.PI / 180);
+      closeTo(recovery.col.step, 6 * Math.PI / 180);
+      assert.strictEqual(recovery.table.length, 11);
+      assert.strictEqual(recovery.table[0].length, 9);
+      assert.ok(recovery.table.flat().every(cell => cell.state === null), 'recovery table must be empty');
     } finally {
       if (plugin) plugin.stop();
       cleanup();
