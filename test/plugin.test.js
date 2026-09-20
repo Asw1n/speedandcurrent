@@ -393,34 +393,22 @@ describe('learning gate helpers', () => {
   const pluginFactory = require('../index.js');
   const helpers = pluginFactory._test;
 
-  it('suspends learning only for blocking navigation.state values when enabled', () => {
+  it('suspends learning when the vessel is not moving', () => {
     const result = helpers.evaluateLearningMode({
-      options: { updateCorrectionTable: true, suspendLearningOnNavigationState: true },
-      navigationState: { ready: true, value: 'motoring' },
+      options: { updateCorrectionTable: true },
+      vesselMoving: false,
       stabilizingUntil: 0,
       now: 10,
     });
 
     assert.strictEqual(result.state, 'suspended');
-    assert.strictEqual(result.reason, 'nav_state');
+    assert.strictEqual(result.reason, 'not_moving');
   });
 
-  it('always suspends learning for anchored even when motoring gate is disabled', () => {
+  it('keeps learning active when the vessel is moving', () => {
     const result = helpers.evaluateLearningMode({
-      options: { updateCorrectionTable: true, suspendLearningOnNavigationState: false },
-      navigationState: { ready: true, value: 'anchored' },
-      stabilizingUntil: 0,
-      now: 10,
-    });
-
-    assert.strictEqual(result.state, 'suspended');
-    assert.strictEqual(result.reason, 'nav_state');
-  });
-
-  it('keeps learning active when navigation.state is unavailable', () => {
-    const result = helpers.evaluateLearningMode({
-      options: { updateCorrectionTable: true, suspendLearningOnNavigationState: true },
-      navigationState: { ready: false, value: null },
+      options: { updateCorrectionTable: true },
+      vesselMoving: true,
       stabilizingUntil: 0,
       now: 10,
     });
@@ -490,40 +478,60 @@ describe('learning gate helpers', () => {
   });
 });
 
+describe('vessel-moving gate', () => {
+  const helpers = require('../index.js')._test;
+  const known = (value) => ({ state: { pathKnown: true, hasDelta: true }, value });
+  const unknown = { state: { pathKnown: false, hasDelta: false }, value: null };
+
+  it('is moving when SOG is at or above the speed-step threshold and gate is disabled', () => {
+    assert.strictEqual(helpers.isVesselMoving({ sogMagnitude: 0.5, speedThreshold: 0.5, navigationStateHandler: null, gateEnabled: false }), true);
+  });
+
+  it('is not moving when SOG is below the speed-step threshold', () => {
+    assert.strictEqual(helpers.isVesselMoving({ sogMagnitude: 0.04, speedThreshold: 0.5, navigationStateHandler: null, gateEnabled: false }), false);
+  });
+
+  it('is not moving for non-finite SOG', () => {
+    assert.strictEqual(helpers.isVesselMoving({ sogMagnitude: NaN, speedThreshold: 0.5, navigationStateHandler: null, gateEnabled: true }), false);
+  });
+
+  it('navigation.state overrides to not-moving when known and the gate is enabled', () => {
+    assert.strictEqual(helpers.isVesselMoving({ sogMagnitude: 2, speedThreshold: 0.5, navigationStateHandler: known('anchored'), gateEnabled: true }), false);
+    assert.strictEqual(helpers.isVesselMoving({ sogMagnitude: 2, speedThreshold: 0.5, navigationStateHandler: known('Moored'), gateEnabled: true }), false);
+    assert.strictEqual(helpers.isVesselMoving({ sogMagnitude: 2, speedThreshold: 0.5, navigationStateHandler: known('motoring'), gateEnabled: true }), false);
+  });
+
+  it('navigation.state does not override when the gate is disabled', () => {
+    assert.strictEqual(helpers.isVesselMoving({ sogMagnitude: 2, speedThreshold: 0.5, navigationStateHandler: known('anchored'), gateEnabled: false }), true);
+  });
+
+  it('navigation.state cannot force "moving" when SOG says otherwise', () => {
+    assert.strictEqual(helpers.isVesselMoving({ sogMagnitude: 0.1, speedThreshold: 0.5, navigationStateHandler: known('sailing'), gateEnabled: true }), false);
+  });
+
+  it('falls back to SOG when navigation.state is unknown, even with the gate enabled', () => {
+    assert.strictEqual(helpers.isVesselMoving({ sogMagnitude: 2, speedThreshold: 0.5, navigationStateHandler: unknown, gateEnabled: true }), true);
+    assert.strictEqual(helpers.isVesselMoving({ sogMagnitude: 2, speedThreshold: 0.5, navigationStateHandler: null, gateEnabled: true }), true);
+  });
+});
+
 describe('leeway gate', () => {
   const helpers = require('../index.js')._test;
-  const underway = { state: { ready: true }, value: 'sailing' };
 
   it('suppresses leeway below the speed-step threshold', () => {
-    assert.strictEqual(helpers.isLeewayValid(0.04, 0.5, underway), false);
+    assert.strictEqual(helpers.isLeewayValid(0.04, 0.5, true), false);
   });
 
-  it('allows leeway at or above the speed-step threshold', () => {
-    assert.strictEqual(helpers.isLeewayValid(0.5, 0.5, underway), true);
+  it('allows leeway at or above the speed-step threshold when the vessel is moving', () => {
+    assert.strictEqual(helpers.isLeewayValid(0.5, 0.5, true), true);
   });
 
-  it('suppresses leeway when anchored even above the speed threshold', () => {
-    const anchored = { state: { ready: true }, value: 'anchored' };
-    assert.strictEqual(helpers.isLeewayValid(2, 0.5, anchored), false);
-  });
-
-  it('suppresses leeway when moored', () => {
-    const moored = { state: { ready: true }, value: 'Moored' };
-    assert.strictEqual(helpers.isLeewayValid(2, 0.5, moored), false);
-  });
-
-  it('allows leeway when motoring, which only gates learning', () => {
-    const motoring = { state: { ready: true }, value: 'motoring' };
-    assert.strictEqual(helpers.isLeewayValid(2, 0.5, motoring), true);
-  });
-
-  it('allows leeway when navigation.state is unavailable', () => {
-    assert.strictEqual(helpers.isLeewayValid(2, 0.5, null), true);
-    assert.strictEqual(helpers.isLeewayValid(2, 0.5, { state: { ready: false }, value: null }), true);
+  it('suppresses leeway when the vessel is not moving even above the speed threshold', () => {
+    assert.strictEqual(helpers.isLeewayValid(2, 0.5, false), false);
   });
 
   it('suppresses leeway for non-finite speed', () => {
-    assert.strictEqual(helpers.isLeewayValid(NaN, 0.5, underway), false);
+    assert.strictEqual(helpers.isLeewayValid(NaN, 0.5, true), false);
   });
 });
 

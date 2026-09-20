@@ -20,8 +20,9 @@ const {
 const { CorrectionTable } = require('./correctionTable.js');
 
 const LONG_STABILIZING_MS = 60 * 1000;
-const ALWAYS_BLOCKING_NAVIGATION_STATES = new Set(['anchored', 'moored']);
-const OPTIONAL_BLOCKING_NAVIGATION_STATES = new Set(['motoring']);
+// navigation.state values that indicate the vessel is not moving. Only applied as an
+// override (see isVesselMoving) when options.suspendLearningOnNavigationState is enabled.
+const NOT_MOVING_NAVIGATION_STATES = new Set(['anchored', 'moored', 'motoring']);
 
 function normalizeNavigationState(value) {
   return typeof value === 'string' ? value.trim().toLowerCase() : null;
@@ -40,37 +41,44 @@ function isCogOverrideActive(groundSpeedPolar, speedThreshold) {
 }
 
 /**
+ * The vessel's own "moving" state, derived from SOG. When navigation.state is known
+ * (has ever delivered a value) and the suspend-on-navigation-state setting is enabled,
+ * it can additionally force "not moving" (anchored/moored/motoring) — but it can never
+ * force "moving" when SOG says otherwise, since navigation.state can go stale or wrong
+ * without a way to verify it independently.
+ */
+function isVesselMoving({ sogMagnitude, speedThreshold, navigationStateHandler, gateEnabled }) {
+  const ownMoving = Number.isFinite(sogMagnitude) && sogMagnitude >= speedThreshold;
+  if (!ownMoving || !gateEnabled) return ownMoving;
+  const state = navigationStateHandler?.state;
+  const navigationKnown = state?.pathKnown === true && state?.hasDelta === true;
+  if (!navigationKnown) return true;
+  return !NOT_MOVING_NAVIGATION_STATES.has(normalizeNavigationState(navigationStateHandler.value));
+}
+
+/**
  * Leeway is the angle of the corrected boatspeed vector, so a small lateral
  * correction divided by a near-zero magnitude yields a large, meaningless angle.
  */
-function isLeewayValid(speed, speedThreshold, navigationStateHandler) {
+function isLeewayValid(speed, speedThreshold, vesselMoving) {
   if (!(speed >= speedThreshold)) return false;
-  const state = navigationStateHandler?.state;
-  if (state?.ready !== true) return true;
-  return !ALWAYS_BLOCKING_NAVIGATION_STATES.has(normalizeNavigationState(navigationStateHandler.value));
+  return vesselMoving;
 }
 
-function evaluateLearningMode({ options = {}, navigationState, stabilizingUntil = 0, stabilizingReason = null, now = Date.now() }) {
-  const normalizedNavigationState = normalizeNavigationState(navigationState?.value);
-  const navigationGateReady = navigationState?.ready === true;
-  const navigationGateBlocking = navigationGateReady && (
-    ALWAYS_BLOCKING_NAVIGATION_STATES.has(normalizedNavigationState)
-    || (!!options.suspendLearningOnNavigationState && OPTIONAL_BLOCKING_NAVIGATION_STATES.has(normalizedNavigationState))
-  );
-
+function evaluateLearningMode({ options = {}, vesselMoving = true, stabilizingUntil = 0, stabilizingReason = null, now = Date.now() }) {
   if (!options.updateCorrectionTable) {
-    return { state: 'off', reason: 'manual', navigationGateBlocking, normalizedNavigationState };
+    return { state: 'off', reason: 'manual' };
   }
 
-  if (navigationGateBlocking) {
-    return { state: 'suspended', reason: 'nav_state', navigationGateBlocking, normalizedNavigationState };
+  if (!vesselMoving) {
+    return { state: 'suspended', reason: 'not_moving' };
   }
 
   if (now < stabilizingUntil) {
-    return { state: 'stabilizing', reason: stabilizingReason || 'startup', navigationGateBlocking, normalizedNavigationState };
+    return { state: 'stabilizing', reason: stabilizingReason || 'startup' };
   }
 
-  return { state: 'active', reason: null, navigationGateBlocking, normalizedNavigationState };
+  return { state: 'active', reason: null };
 }
 
 function evaluateObservationGate({
@@ -86,7 +94,7 @@ function evaluateObservationGate({
     return { state: 'skipped', reason: 'learning_off' };
   }
   if (learningMode.state === 'suspended') {
-    return { state: 'skipped', reason: learningMode.reason === 'cog_override' ? 'cog_override_active' : 'nav_state_blocked' };
+    return { state: 'skipped', reason: learningMode.reason === 'cog_override' ? 'cog_override_active' : 'not_moving_blocked' };
   }
   if (learningMode.state === 'stabilizing') {
     return { state: 'skipped', reason: 'stabilizing' };
@@ -118,6 +126,7 @@ function buildNavigationStateStatus(handler, gateEnabled) {
   const state = handler.state;
   const value = handler.value ?? null;
   const normalized = normalizeNavigationState(value);
+  const known = state.pathKnown === true && state.hasDelta === true;
   return {
     enabled: !!gateEnabled,
     path: handler.path,
@@ -125,10 +134,7 @@ function buildNavigationStateStatus(handler, gateEnabled) {
     ready: state.ready,
     isStale: state.isStale,
     value,
-    blocking: state.ready && (
-      ALWAYS_BLOCKING_NAVIGATION_STATES.has(normalized)
-      || (!!gateEnabled && OPTIONAL_BLOCKING_NAVIGATION_STATES.has(normalized))
-    )
+    blocking: !!gateEnabled && known && NOT_MOVING_NAVIGATION_STATES.has(normalized)
   };
 }
 
@@ -140,7 +146,7 @@ function getDerivedObservationStatus(learningMode, lastState, lastReason) {
     return { state: 'skipped', reason: 'stabilizing' };
   }
   if (learningMode.state === 'suspended') {
-    return { state: 'skipped', reason: learningMode.reason === 'cog_override' ? 'cog_override_active' : 'nav_state_blocked' };
+    return { state: 'skipped', reason: learningMode.reason === 'cog_override' ? 'cog_override_active' : 'not_moving_blocked' };
   }
   return { state: lastState, reason: lastReason };
 }
@@ -299,9 +305,15 @@ module.exports = function (app) {
 
   function getLearningStatePayload() {
     const navigationState = buildNavigationStateStatus(navigationStateHandler, options.suspendLearningOnNavigationState);
+    const vesselMoving = isVesselMoving({
+      sogMagnitude: smoothedGroundSpeed?.magnitude,
+      speedThreshold: minSpeed,
+      navigationStateHandler,
+      gateEnabled: options.suspendLearningOnNavigationState
+    });
     const learningMode = evaluateLearningMode({
       options,
-      navigationState,
+      vesselMoving,
       stabilizingUntil: learningStabilizingUntil,
       stabilizingReason: learningStabilizingReason,
       now: Date.now()
@@ -319,6 +331,7 @@ module.exports = function (app) {
       observationReason: observation.reason,
       minStwForLearning: minSpeed,
       minSogForLearning: minSpeed,
+      vesselMoving,
       navigationState
     };
   }
@@ -660,7 +673,12 @@ module.exports = function (app) {
 
         const learningMode = evaluateLearningMode({
           options,
-          navigationState: buildNavigationStateStatus(navigationStateHandler, options.suspendLearningOnNavigationState),
+          vesselMoving: isVesselMoving({
+            sogMagnitude: smoothedGroundSpeed?.magnitude,
+            speedThreshold: minSpeed,
+            navigationStateHandler,
+            gateEnabled: options.suspendLearningOnNavigationState
+          }),
           stabilizingUntil: learningStabilizingUntil,
           stabilizingReason: learningStabilizingReason,
           now: Date.now()
@@ -864,7 +882,13 @@ module.exports = function (app) {
       clearLifecycleWarning('attitude.roll');
       if (correctedBoatSpeed.magnitude > 0) {
         const { correction, variance } = table.getCorrection(correctedBoatSpeed.magnitude, rawAttitude.value?.roll);
-        const leewayValid = isLeewayValid(correctedBoatSpeed.magnitude, minSpeed, navigationStateHandler);
+        const vesselMoving = isVesselMoving({
+          sogMagnitude: rawGroundSpeed?.magnitude,
+          speedThreshold: minSpeed,
+          navigationStateHandler,
+          gateEnabled: options.suspendLearningOnNavigationState
+        });
+        const leewayValid = isLeewayValid(correctedBoatSpeed.magnitude, minSpeed, vesselMoving);
         speedCorrection.setVectorValue(
           { x: correction.x, y: leewayValid ? correction.y : 0 },
           { x: variance.x, y: leewayValid ? variance.y : 0 }
@@ -916,7 +940,12 @@ module.exports = function (app) {
     lrnBoatSpeed.setVectorValue({ x: smoothedBoatSpeed.value, y: 0 }, { x: smoothedBoatSpeed.variance ?? 0, y: 0 });
     const learningMode = evaluateLearningMode({
       options,
-      navigationState: buildNavigationStateStatus(navigationStateHandler, options.suspendLearningOnNavigationState),
+      vesselMoving: isVesselMoving({
+        sogMagnitude: smoothedGroundSpeed.magnitude,
+        speedThreshold: minSpeed,
+        navigationStateHandler,
+        gateEnabled: options.suspendLearningOnNavigationState
+      }),
       stabilizingUntil: learningStabilizingUntil,
       stabilizingReason: learningStabilizingReason,
       now: Date.now()
@@ -1099,13 +1128,13 @@ module.exports = function (app) {
 module.exports._test = {
   normalizeNavigationState,
   getShortStabilizingMs,
+  isVesselMoving,
   evaluateLearningMode,
   isCogOverrideActive,
   isLeewayValid,
   evaluateObservationGate,
   getDerivedObservationStatus,
   buildNavigationStateStatus,
-  ALWAYS_BLOCKING_NAVIGATION_STATES,
-  OPTIONAL_BLOCKING_NAVIGATION_STATES,
+  NOT_MOVING_NAVIGATION_STATES,
   LONG_STABILIZING_MS,
 };
