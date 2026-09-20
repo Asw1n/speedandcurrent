@@ -183,16 +183,19 @@ The **Correction Table** section displays the active correction table. Rows are 
 
 ### Reading the table
 
-Each cell that has received at least one observation shows two values:
+Each cell that has received at least one observation shows its correction values. Cells participating in the latest estimate also show their normalized fusion weight as a blue bar along the bottom:
 
-- **Speed factor** (e.g. `+3.2%` or `−1.5%`): how much faster or slower the true speed is compared to what the paddle wheel reads. **Green** = paddle wheel reads slow (the correction adds speed). **Orange** = paddle wheel reads fast (the correction reduces speed). Colour intensity scales with the magnitude of the factor relative to the largest factor in the table.
-- **Leeway** (e.g. `+4°`): the observed lateral correction for that speed/heel combination. Positive is starboard. When leeway is non-zero the cell background shows diagonal stripes; the stripe angle encodes the leeway direction visually.
+- **Speed factor** (e.g. `+3.2%` or `−1.5%`): how much faster or slower the true speed is compared to what the paddle wheel reads.
+- **Leeway** (e.g. `+4°`): the observed lateral correction for that speed/heel combination. Positive is starboard.
+- **Fusion weight**: the blue bar is that cell's normalized share of the current precision-weighted estimate. A full-width bar represents 100%, and the displayed weights sum to approximately 100%.
+
+Cell backgrounds encode the speed factor: green means the paddlewheel reads slow and orange means it reads fast. When leeway is available, stripe angle encodes its direction.
 
 Empty cells have not yet received any observations and show no correction.
 
 ### Active cell and neighbours
 
-The **active cell** — the one most recently updated by an incoming STW sample — is highlighted with a bold border and blue text. The **neighbour cells** contributing to the current interpolation are shown with a faint tint. Watching these as you sail shows exactly which part of the table is being applied and updated at any moment.
+The **active cell** — the one most recently updated by an incoming STW sample — is shown with blue text. The weight bars show which cells contribute to the current interpolation without using cell borders as indicators.
 
 ### Table management
 
@@ -239,17 +242,44 @@ When a new paddle wheel sample arrives the plugin:
 
 ### Neighbour interpolation
 
-Rather than bi-linear interpolation the plugin uses **inverse-distance weighting** over the five nearest cells in speed/heel space:
+The plugin combines learned cells using both their Kalman covariance and their distance from the requested speed and heel. Speed and heel distances are divided by their respective grid steps, so distance is measured in dimensionless cell units. A cell participates only when:
 
-> wᵢ = 1 / (dᵢ + ε)
+```text
+cell index > 50
+cell distance <= 2
+```
 
-where dᵢ is the Euclidean distance from the query point to cell centre i in normalised speed/heel space. Only cells that have received at least one observation (N > 0) contribute.
+For each participating cell, distance is converted into additional uncertainty:
 
-The final correction is the normalised weighted average:
+```text
+effective covariance = cell covariance + q * distance² * identity matrix
+```
 
-> x̂ = Σ(wᵢ · xᵢ) / Σwᵢ,  ŷ = Σ(wᵢ · yᵢ) / Σwᵢ
+The inverse effective covariance is the cell's precision. The correction and its covariance are obtained by full 2×2 precision fusion:
 
-The variance of each axis is propagated through the same weighting, so cells with low confidence (high covariance) influence the result less. If only one or two cells have data, the correction extrapolates gradually to nearby conditions. As more cells fill in, the correction becomes tighter and more local.
+```text
+combined precision = sum(inverse(effective covariance))
+correction covariance = inverse(combined precision)
+correction = correction covariance
+			 * sum(inverse(effective covariance) * cell correction)
+```
+
+This gives nearby, mature cells the greatest influence. A fresh table borrows information more broadly because cell covariance is still large; a mature table becomes more local as its cell covariance falls. If no eligible cell exists, the plugin applies zero correction rather than extrapolating beyond the configured radius.
+
+#### Automatic spatial variance (`q`)
+
+`q` describes how much genuine correction variation is expected between adjacent cells, in correction variance per squared cell. It is calculated without user input from horizontal and vertical pairs where both cells have an index greater than 50. For each adjacent pair:
+
+```text
+pair q = (
+	squared distance between the two correction vectors
+	- trace(cell covariance 1 + cell covariance 2)
+) / 2
+```
+
+The table uses the median pair estimate, which limits the effect of isolated rough or immature cells. At least three eligible adjacent pairs and a positive median are required. A zero or negative estimate means the observed differences do not resolve spatial variation above the cells' estimated uncertainty; because using zero would disable distance weighting, the plugin then uses a conservative fallback of `0.002 (m/s)²` per squared cell. `q` is calculated when a table is loaded and recalculated after every 600 accepted learning observations. It therefore remains constant while learning is disabled. The applied `q`, raw estimate, source, and supporting pair count are runtime diagnostics and are not saved in the correction-table file.
+
+The Correction Table view shades cells used by the latest lookup according to `trace(effective covariance)`: deepest blue is the smallest effective variance and transparent is the largest. This display value is also runtime-only.
 
 ### How the correction table is populated
 

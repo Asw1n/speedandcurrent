@@ -1,6 +1,13 @@
 const { Table2D} = require('signalkutilities');
 const { KalmanFilter, State } = require('kalman-filter');
 
+const MAX_INTERPOLATION_DISTANCE = 2;
+const MIN_CELL_INDEX = 50;
+const Q_RECALCULATION_INTERVAL = 600;
+const MIN_Q_PAIR_COUNT = 3;
+const DEFAULT_Q = 0.002;
+const COVARIANCE_FLOOR = 1e-9;
+
 // Module-level helpers — avoids creating new Function objects on every Kalman update call
 function _rotateValue(cos, sin, vector) {
   return [
@@ -11,8 +18,35 @@ function _rotateValue(cos, sin, vector) {
 
 function _rotateVariance(cos, sin, vector) {
   return [
-    [vector[0] * cos ** 2 + vector[1] * sin ** 2, (vector[0] - vector[1]) * cos * sin],
-    [(vector[0] - vector[1]) * cos * sin,          vector[0] * sin ** 2 + vector[1] * cos ** 2]
+    [vector[0] * cos ** 2 + vector[1] * sin ** 2, (vector[1] - vector[0]) * cos * sin],
+    [(vector[1] - vector[0]) * cos * sin,          vector[0] * sin ** 2 + vector[1] * cos ** 2]
+  ];
+}
+
+function _median(values) {
+  const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
+  if (sorted.length === 0) return null;
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2
+    : sorted[middle];
+}
+
+function _symmetricCovariance(covariance, diagonalInflation = 0) {
+  if (!Array.isArray(covariance) || !Array.isArray(covariance[0]) || !Array.isArray(covariance[1])) return null;
+  const xx = covariance[0][0] + diagonalInflation;
+  const yy = covariance[1][1] + diagonalInflation;
+  const xy = (covariance[0][1] + covariance[1][0]) / 2;
+  if (![xx, xy, yy].every(Number.isFinite)) return null;
+  return [[Math.max(xx, COVARIANCE_FLOOR), xy], [xy, Math.max(yy, COVARIANCE_FLOOR)]];
+}
+
+function _inverse2(matrix) {
+  const det = matrix[0][0] * matrix[1][1] - matrix[0][1] * matrix[1][0];
+  if (!Number.isFinite(det) || det <= COVARIANCE_FLOOR ** 2) return null;
+  return [
+    [matrix[1][1] / det, -matrix[0][1] / det],
+    [-matrix[1][0] / det, matrix[0][0] / det]
   ];
 }
 
@@ -26,6 +60,7 @@ class CorrectionTable extends Table2D{
   static fromJSON(data, stability) {
     const table = new CorrectionTable(data.id, data.row, data.col, stability);
     table.table = data.table.map(row => row.map(cellData => CorrectionEstimator.fromJSON(cellData, stability)));
+    table.calculateQ();
     return table;
   }
 
@@ -58,7 +93,8 @@ class CorrectionTable extends Table2D{
         const mean = [[(correction?.x ?? 0)], [(correction?.y ?? 0)]];
         const covXX = Math.max(Number.isFinite(variance?.x) ? variance.x : 0, varianceFloor);
         const covYY = Math.max(Number.isFinite(variance?.y) ? variance.y : 0, varianceFloor);
-        const covariance = [[covXX, 0], [0, covYY]];
+        const covXY = Number.isFinite(variance?.covariance?.[0]?.[1]) ? variance.covariance[0][1] : 0;
+        const covariance = [[covXX, covXY], [covXY, covYY]];
 
         // Decide initialization index based on coverage/support from old table
         const inBounds = (
@@ -99,6 +135,11 @@ class CorrectionTable extends Table2D{
     this.lastUpdatedCell = null;
     this.lastUpdateResult = null;
     this.neighbours = [];
+    this.q = DEFAULT_Q;
+    this.qPairCount = 0;
+    this.qEstimate = null;
+    this.qSource = 'fallback';
+    this.acceptedObservationsSinceQ = 0;
   }
   
   update(speed, heel, groundSpeed, current, boatSpeed, heading) {
@@ -106,47 +147,106 @@ class CorrectionTable extends Table2D{
     const accepted = cell?.update(groundSpeed, current, boatSpeed, heading);
     this.lastUpdatedCell = cell;
     this.lastUpdateResult = accepted === true ? 'accepted' : 'rejected';
+    if (accepted === true) {
+      this.acceptedObservationsSinceQ++;
+      if (this.acceptedObservationsSinceQ >= Q_RECALCULATION_INTERVAL) {
+        this.calculateQ();
+      }
+    }
+    return accepted === true;
+  }
+
+  calculateQ() {
+    const pairEstimates = [];
+    for (let row = 0; row < this.n[0]; row++) {
+      for (let col = 0; col < this.n[1]; col++) {
+        const first = this.table[row][col];
+        if (first.N <= MIN_CELL_INDEX) continue;
+        for (const [rowOffset, colOffset] of [[1, 0], [0, 1]]) {
+          const second = this.table[row + rowOffset]?.[col + colOffset];
+          if (!second || second.N <= MIN_CELL_INDEX) continue;
+          const firstCovariance = _symmetricCovariance(first.covariance);
+          const secondCovariance = _symmetricCovariance(second.covariance);
+          if (!firstCovariance || !secondCovariance) continue;
+          const dx = first.x - second.x;
+          const dy = first.y - second.y;
+          const uncertainty = firstCovariance[0][0] + firstCovariance[1][1]
+            + secondCovariance[0][0] + secondCovariance[1][1];
+          pairEstimates.push((dx * dx + dy * dy - uncertainty) / 2);
+        }
+      }
+    }
+
+    const estimate = _median(pairEstimates);
+    this.qPairCount = pairEstimates.length;
+    this.qEstimate = Number.isFinite(estimate) ? estimate : null;
+    if (pairEstimates.length >= MIN_Q_PAIR_COUNT && estimate > 0) {
+      this.q = estimate;
+      this.qSource = 'derived';
+    } else {
+      this.q = DEFAULT_Q;
+      this.qSource = 'fallback';
+    }
+    this.acceptedObservationsSinceQ = 0;
+    return this.q;
+  }
+
+  _findEligibleNeighbours(speed, heel) {
+    const neighbours = [];
+    for (let row = 0; row < this.n[0]; row++) {
+      for (let col = 0; col < this.n[1]; col++) {
+        const cell = this.table[row][col];
+        cell.effectiveVariance = null;
+        if (cell.N <= MIN_CELL_INDEX) continue;
+        const rowDistance = (this.indexToValue(row, 0) - speed) / this.step[0];
+        const colDistance = (this.indexToValue(col, 1) - heel) / this.step[1];
+        const dist = Math.sqrt(rowDistance * rowDistance + colDistance * colDistance);
+        if (Number.isFinite(dist) && dist <= MAX_INTERPOLATION_DISTANCE) {
+          neighbours.push({ cell, row, col, dist, normWeight: 0 });
+        }
+      }
+    }
+    return neighbours.sort((a, b) => a.dist - b.dist);
   }
 
   getCorrection(speed, heel) {
-    this.neighbours = this.findClosest(speed, heel, 5);
-    if (this.neighbours.length == 0) return { correction: {x: 0, y: 0}, variance: null };
-    // Compute the correction and variance from the neighbours
-    let x = 0;
-    let y = 0;
-    let varX = 0;
-    let varY = 0;
-    let totalWeight = 0;
+    this.neighbours = this._findEligibleNeighbours(speed, heel);
+    const emptyResult = { correction: { x: 0, y: 0 }, variance: { x: 0, y: 0, covariance: [[0, 0], [0, 0]] } };
+    if (this.neighbours.length === 0) return emptyResult;
+
+    const precision = [[0, 0], [0, 0]];
+    const information = [0, 0];
+    let totalScalarWeight = 0;
     for (const neighbour of this.neighbours) {
-      const { cell:correction, dist } = neighbour;
-      if (correction.N > 0) {
-        const weight = 1 / (dist + 1e-6); 
-        neighbour.normWeight = weight;
-        x += correction.x * weight;
-        y += correction.y * weight;
-        varX += correction.covariance[0][0] * weight ** 2;
-        varY += correction.covariance[1][1] * weight ** 2;
-        totalWeight += weight;
-      }
+      const effectiveCovariance = _symmetricCovariance(neighbour.cell.covariance, this.q * neighbour.dist ** 2);
+      const cellPrecision = effectiveCovariance && _inverse2(effectiveCovariance);
+      if (!cellPrecision) continue;
+
+      neighbour.effectiveCovariance = effectiveCovariance;
+      neighbour.cell.effectiveVariance = effectiveCovariance[0][0] + effectiveCovariance[1][1];
+      neighbour.scalarWeight = cellPrecision[0][0] + cellPrecision[1][1];
+      totalScalarWeight += neighbour.scalarWeight;
+      precision[0][0] += cellPrecision[0][0];
+      precision[0][1] += cellPrecision[0][1];
+      precision[1][0] += cellPrecision[1][0];
+      precision[1][1] += cellPrecision[1][1];
+      information[0] += cellPrecision[0][0] * neighbour.cell.x + cellPrecision[0][1] * neighbour.cell.y;
+      information[1] += cellPrecision[1][0] * neighbour.cell.x + cellPrecision[1][1] * neighbour.cell.y;
     }
-    if (totalWeight > 0) {
-      for (const neighbour of this.neighbours) {
-        neighbour.normWeight /= totalWeight;
-      }
+
+    const covariance = _inverse2(precision);
+    if (!covariance) return emptyResult;
+    for (const neighbour of this.neighbours) {
+      neighbour.normWeight = totalScalarWeight > 0 && Number.isFinite(neighbour.scalarWeight)
+        ? neighbour.scalarWeight / totalScalarWeight
+        : 0;
     }
-
-    if (totalWeight === 0) return { correction: { x: 0, y: 0 }, variance: { x: 0, y: 0 } };
-
-    // Compute the final correction and variance
-    // Variance of a weighted mean: Σ(w²·var_i) / (Σw)²
-    const tw2 = totalWeight * totalWeight;
-    x /= totalWeight;
-    y /= totalWeight;
-    varX /= tw2;
-    varY /= tw2;
-    this.totalWeight = totalWeight;
-
-    return { correction: { x, y }, variance: { x: varX, y: varY } };
+    const x = covariance[0][0] * information[0] + covariance[0][1] * information[1];
+    const y = covariance[1][0] * information[0] + covariance[1][1] * information[1];
+    return {
+      correction: { x, y },
+      variance: { x: covariance[0][0], y: covariance[1][1], covariance }
+    };
   }
   
   report() {
@@ -178,6 +278,9 @@ class CorrectionTable extends Table2D{
           cellReport.factor = factor;
           cellReport.leeway = leeway;
           cellReport.trace = trace;
+          cellReport.effectiveVariance = Number.isFinite(correction.effectiveVariance)
+            ? correction.effectiveVariance
+            : null;
           cellReport.speedBin = speedBin;
           cellReport.heelBin = heelBin;
           // Mark selected if this is the last updated cell
@@ -194,6 +297,10 @@ class CorrectionTable extends Table2D{
         })
       ),
       displayAttributes: this.displayAttributes,
+      q: this.q,
+      qPairCount: this.qPairCount,
+      qEstimate: this.qEstimate,
+      qSource: this.qSource,
       lastUpdateResult: this.lastUpdateResult ?? null
     };
   }
@@ -228,6 +335,7 @@ class CorrectionEstimator {
   constructor(filterModel, initialState) {
     this.filter = new KalmanFilter(filterModel);
     this.filterState = null;
+    this.effectiveVariance = null;
     if (initialState != null) {
       this.filterState = new State(initialState);
     }

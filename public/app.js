@@ -677,7 +677,22 @@ function renderLiveSections() {
       speedSymbol: speedC.symbol,
       heelSymbol:  angleC.symbol,
     };
-    Object.values(state.tablesById).forEach(t => tableEl.appendChild(tableRenderer.render(t, tableOpts)));
+    const tables = Object.values(state.tablesById);
+    const qEl = document.getElementById('table-q');
+    if (qEl) {
+      const activeTable = tables[0];
+      if (Number.isFinite(activeTable?.q)) {
+        const pairCount = Number.isInteger(activeTable.qPairCount) ? activeTable.qPairCount : 0;
+        const rawEstimate = Number.isFinite(activeTable.qEstimate)
+          ? `; raw estimate ${activeTable.qEstimate.toExponential(3)} from ${pairCount} adjacent pairs`
+          : `; ${pairCount} eligible adjacent pairs`;
+        const source = activeTable.qSource === 'derived' ? `derived from ${pairCount} adjacent pairs` : `fallback${rawEstimate}`;
+        qEl.textContent = `Spatial variance q: ${activeTable.q.toExponential(3)} (${source})`;
+      } else {
+        qEl.textContent = '';
+      }
+    }
+    tables.forEach(t => tableEl.appendChild(tableRenderer.render(t, tableOpts)));
   }
 }
 

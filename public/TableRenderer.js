@@ -1,8 +1,8 @@
 // TableRenderer — purpose-built renderer for the correction table.
 // Rows = speed bins (knots), columns = heel bins (degrees).
 // Each learned cell shows factor deviation (±%) and leeway (°).
-// Background encodes factor: green = paddlewheel reads slow, orange = reads fast.
-// Active cell (last updated) gets a bold border; interpolation neighbours get a faint tint.
+// Background encodes factor and leeway; a bottom bar encodes fusion weight.
+// Active cell (last updated) gets blue text.
 
 const RAD_TO_DEG = 180 / Math.PI;
 const MPS_TO_KNOTS = 1.943844;
@@ -89,7 +89,7 @@ class TableRenderer {
       td.appendChild(d);
       const color = this._factorColor(factor, maxDev);
       if (leeway !== null) {
-        const angleDeg = 90 + leeway * RAD_TO_DEG * 1;
+        const angleDeg = 90 + leeway * RAD_TO_DEG;
         td.style.background = `repeating-linear-gradient(
           ${angleDeg}deg,
           ${color} 0px, ${color} 9px,
@@ -107,13 +107,19 @@ class TableRenderer {
     }
 
     const attrs = cell.displayAttributes;
-    if (attrs?.selected)          td.classList.add('cell--active');
-    else if (attrs?.normWeight > 0) td.classList.add('cell--neighbour');
+    if (Number.isFinite(attrs?.normWeight) && attrs.normWeight > 0) {
+      const d = document.createElement('div');
+      d.className = 'cell-weight';
+      const weight = Math.max(0, Math.min(1, attrs.normWeight));
+      d.style.width = `${weight * 100}%`;
+      d.title = `Fusion weight ${(weight * 100).toFixed(1)}%`;
+      td.appendChild(d);
+    }
+    if (attrs?.selected) td.classList.add('cell--active');
 
     return td;
   }
 
-  // Find the largest absolute factor deviation from 1 to normalise the color scale.
   _computeMaxDev(table) {
     let maxDev = 0;
     for (const row of table) {
@@ -123,21 +129,18 @@ class TableRenderer {
         if (dev > maxDev) maxDev = dev;
       }
     }
-    return maxDev || 0.05; // avoid a fully white table when all factors are near 1
+    return maxDev || 0.05;
   }
 
-  // factor < 1: paddlewheel reads fast → white→orange
-  // factor > 1: paddlewheel reads slow → white→green
   _factorColor(factor, maxDev) {
     if (!Number.isFinite(factor)) return '';
     const dev = factor - 1;
     if (Math.abs(dev) < 1e-6) return '';
-    const a = Math.min(1, Math.abs(dev) / maxDev);
+    const intensity = Math.min(1, Math.abs(dev) / maxDev);
     if (dev < 0) {
-      return `rgb(255,${Math.round(255 - 90 * a)},${Math.round(255 * (1 - a))})`; // white→orange
-    } else {
-      return `rgb(${Math.round(255 * (1 - a))},${Math.round(255 - 95 * a)},${Math.round(255 - 175 * a)})`; // white→green
+      return `rgb(255,${Math.round(255 - 90 * intensity)},${Math.round(255 * (1 - intensity))})`;
     }
+    return `rgb(${Math.round(255 * (1 - intensity))},${Math.round(255 - 95 * intensity)},${Math.round(255 - 175 * intensity)})`;
   }
 }
 

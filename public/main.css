@@ -34,6 +34,7 @@
 .TableCell {
   width: 60px;
   height: 60px;
+  position: relative;
   text-align: center;
   vertical-align: middle;
   font-size: 11px;
@@ -42,9 +43,9 @@
 .TableCorner { font-size: 10px; color: #888; font-weight: 400; text-align: center; }
 /* cell states */
 .cell--empty     { background-color: #f0f0f0; }
-.cell--neighbour { box-shadow: inset 0 0 0 1px #90a4ae; }
 .cell-factor     { font-weight: 600; font-size: 12px; }
 .cell-leeway     { font-weight: 600; font-size: 12px; margin-top: 2px; }
+.cell-weight     { position: absolute; left: 0; bottom: 0; height: 4px; background-color: #0d6efd; }
 .cell--active .cell-factor,
 .cell--active .cell-leeway { color: #1565c0; }
 
@@ -118,6 +119,7 @@ tr.stale td { color: #aaa; font-style: italic; }
     #f0f0f0 4px, #f0f0f0 5px
   );
 }
+.legend-swatch--weight   { position: relative; border: 0; }
+.legend-swatch--weight::after { content: ''; position: absolute; left: 0; right: 25%; bottom: 2px; height: 4px; background-color: #0d6efd; }
 .legend-swatch--active   { background: transparent; border: none; width: auto; height: auto; font-weight: 600; color: #1565c0; font-size: 11px; white-space: nowrap; }
-.legend-swatch--neighbour { background: #fff; box-shadow: inset 0 0 0 1px #90a4ae; }
 .legend-label-wide       { flex-shrink: 0; white-space: nowrap; font-weight: 600; }

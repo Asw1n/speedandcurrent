@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { CorrectionTable } = require('../correctionTable.js');
 
 // ---------------------------------------------------------------------------
 // App shim helpers
@@ -143,6 +144,88 @@ function createAppShim() {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+function correctionState(x, y, variance, index) {
+  return {
+    state: {
+      mean: [[x], [y]],
+      covariance: [[variance, 0], [0, variance]],
+      index,
+    }
+  };
+}
+
+function correctionTableFromCells(cells) {
+  return CorrectionTable.fromJSON({
+    id: 'test',
+    row: { min: 0, max: cells.length - 1, step: 1 },
+    col: { min: 0, max: cells[0].length - 1, step: 1 },
+    table: cells,
+  }, 7);
+}
+
+describe('correction table covariance interpolation', () => {
+  it('derives q from mature adjacent cells', () => {
+    const table = correctionTableFromCells([
+      [correctionState(0, 0, 0.001, 51), correctionState(0, 0.2, 0.001, 51)],
+      [correctionState(0.1, 0, 0.001, 51), correctionState(0.1, 0.2, 0.001, 51)],
+    ]);
+
+    assert.strictEqual(table.qPairCount, 4);
+    assert.ok(Math.abs(table.q - 0.0105) < 1e-12);
+    assert.strictEqual(table.qSource, 'derived');
+  });
+
+  it('uses the fallback when cell uncertainty makes the median q nonpositive', () => {
+    const table = correctionTableFromCells([
+      [correctionState(0, 0, 1, 51), correctionState(0.01, 0, 1, 51)],
+      [correctionState(0, 0.01, 1, 51), correctionState(0.01, 0.01, 1, 51)],
+    ]);
+
+    assert.strictEqual(table.qPairCount, 4);
+    assert.ok(table.qEstimate < 0);
+    assert.strictEqual(table.q, 0.002);
+    assert.strictEqual(table.qSource, 'fallback');
+  });
+
+  it('uses only cells within two cell units with index greater than 50', () => {
+    const cells = Array.from({ length: 7 }, (_, row) => [correctionState(row, 0, 0.01, row === 2 ? 50 : 51)]);
+    const table = correctionTableFromCells(cells);
+
+    table.getCorrection(0, 0);
+
+    assert.deepStrictEqual(table.neighbours.map(neighbour => neighbour.row), [0, 1]);
+    assert.ok(table.neighbours.every(neighbour => neighbour.dist <= 2 && neighbour.cell.N > 50));
+  });
+
+  it('gives a lower-covariance cell more influence at equal distance', () => {
+    const table = correctionTableFromCells([[
+      correctionState(0, 0, 0.01, 51),
+      correctionState(10, 0, 1, 51),
+    ]]);
+    table.q = 0;
+
+    const result = table.getCorrection(0, 0.5);
+
+    assert.ok(result.correction.x > 0 && result.correction.x < 0.2);
+    assert.ok(result.variance.covariance.flat().every(Number.isFinite));
+    assert.strictEqual(table.table.flat().filter(cell => cell.effectiveVariance !== null).length, 2);
+  });
+
+  it('recalculates q after 600 accepted observations', () => {
+    const table = correctionTableFromCells([[correctionState(0, 0, 0.01, 51)]]);
+    table.table[0][0].update = () => true;
+    let recalculations = 0;
+    table.calculateQ = () => { recalculations++; table.acceptedObservationsSinceQ = 0; return table.q; };
+
+    for (let observation = 0; observation < 600; observation++) {
+      table.update(0, 0, {}, {}, {}, 0);
+    }
+
+    assert.strictEqual(recalculations, 1);
+    assert.strictEqual(table.acceptedObservationsSinceQ, 0);
+  });
+});
 
 describe('module export', () => {
   it('exports a factory function', () => {
