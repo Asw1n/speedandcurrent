@@ -659,10 +659,11 @@ function renderLiveSections() {
     const reason = reasonTextMap[learningState?.observationReason]
       || reasonTextMap[learningState?.reason]
       || '\u2014';
+    const showReason = learningState?.observationState && learningState.observationState !== 'accepted';
     statusTbody.innerHTML =
         `<tr><td class="text-muted small">Learning</td><td class="small">${learningText}</td></tr>` +
         `<tr><td class="text-muted small">Observation</td><td class="small">${obsText}</td></tr>` +
-      `<tr><td class="text-muted small">Reason</td><td class="small">${reason}</td></tr>`;
+      (showReason ? `<tr><td class="text-muted small">Reason</td><td class="small">${reason}</td></tr>` : '');
   }
   // Correction table
   const tableEl = document.getElementById('table-container');

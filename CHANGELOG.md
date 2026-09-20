@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The webapp now polls at the plugin's actual sample rate instead of a fixed 1s interval, reported via a new `pollIntervalMs` field on `/api/report`.
 
 ### Fixed
+- The learning status Reason row is now hidden when the last observation was accepted, instead of showing a redundant "Observation recorded" message.
 - `navigation.state` no longer misreports as "not ready" a few seconds after each update; it is an event path that only publishes on transition, so the generic telemetry staleness timer no longer applies to it. The Inputs tab now also displays its current value.
 - Learning and leeway are now gated on the vessel's own SOG-based moving/not-moving state, rather than solely on `navigation.state` freshness. Previously, an infrequent `navigation.state` update could go stale within seconds, silently letting learning continue while anchored or moored. `navigation.state`, when known and `suspendLearningOnNavigationState` is enabled, can still override to "not moving" (anchored/moored/motoring), but can no longer force "moving" against the vessel's own SOG.
 - Webapp report parsing failures now remain visible and still refresh plugin status instead of aborting the polling tick.
