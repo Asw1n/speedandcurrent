@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## Unreleased
 
 ### Fixed
+- Webapp report parsing failures now remain visible and still refresh plugin status instead of aborting the polling tick.
 - Disabled current estimation no longer publishes a zero-current value during plugin startup.
 - Malformed correction tables now recover safely at startup, while explicit loads reject invalid files without replacing the active table.
 

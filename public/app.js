@@ -235,7 +235,12 @@ async function apiGet(path) {
   const ct = res.headers.get('content-type') || '';
   if (!ct.includes('application/json')) { showMessage('Unexpected server response.'); return null; }
   showMessage('');
-  return res.json();
+  try {
+    return await res.json();
+  } catch (err) {
+    showMessage('Unexpected server response.');
+    return null;
+  }
 }
 
 // PUT /api/settings: server returns full merged config — store it and re-render.
@@ -668,31 +673,34 @@ let updateTimer = null;
 let lastTickOk = false;
 
 async function tick() {
-  const data = await apiGet('/api/report');
-  if (data) {
-    // Recovered from an error — reload meta and config so unit converters,
-    // source lists and settings reflect the (possibly restarted) plugin state.
-    if (!lastTickOk) {
-      await loadMeta();
-      config = await apiGet('/api/settings');
-      if (config && config.tableName) setTableName(config.tableName);
-      renderSettingsPanel();
+  try {
+    const data = await apiGet('/api/report');
+    if (data) {
+      // Recovered from an error — reload meta and config so unit converters,
+      // source lists and settings reflect the (possibly restarted) plugin state.
+      if (!lastTickOk) {
+        await loadMeta();
+        config = await apiGet('/api/settings');
+        if (config && config.tableName) setTableName(config.tableName);
+        renderSettingsPanel();
+      }
+      lastTickOk = true;
+      normaliseState(data);
+      state.learningState = data.learningState || null;
+      renderLiveSections();
+    } else {
+      lastTickOk = false;
+      state.learningState = null;
     }
-    lastTickOk = true;
-    normaliseState(data);
-    state.learningState = data.learningState || null;
-    renderLiveSections();
-  } else {
-    lastTickOk = false;
-    state.learningState = null;
+  } finally {
+    // Always poll status separately so the message reflects plugin state
+    // even when /api/report fails (plugin stopped/restarting).
+    const statusData = await fetch(`${API_BASE}/api/status`, { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : null)
+      .catch(() => null);
+    _pluginStatus = statusData?.status ?? '';
+    _refreshMessage();
   }
-  // Always poll status separately so the message reflects plugin state
-  // even when /api/report fails (plugin stopped/restarting).
-  const statusData = await fetch(`${API_BASE}/api/status`, { credentials: 'same-origin' })
-    .then(r => r.ok ? r.json() : null)
-    .catch(() => null);
-  _pluginStatus = statusData?.status ?? '';
-  _refreshMessage();
 }
 
 function startUpdates() {
