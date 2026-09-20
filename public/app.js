@@ -505,6 +505,15 @@ function itemLabel(item) {
   return metaById[item.id]?.displayName ?? item.path ?? item.id;
 }
 
+function formatNavigationStateValue(navState) {
+  if (!navState) return '—';
+  if (navState.pathKnown === false) return 'not available';
+  // Use `value` rather than `ready` — navigation.state changes infrequently, so it goes
+  // stale (ready=false) between changes even though the last known value is still valid.
+  if (navState.value == null) return 'not ready';
+  return navState.isStale ? `${navState.value} (stale)` : navState.value;
+}
+
 function buildDataTable(rows) {
   const tbl = document.createElement('table');
   tbl.className = 'table table-sm table-borderless mb-0';
@@ -533,14 +542,15 @@ function filterById(arr, ids) {
   });
 }
 
-function renderGroupInto(elId, polars, deltas, attitudes) {
+function renderGroupInto(elId, polars, deltas, attitudes, extraRows = []) {
   const el = document.getElementById(elId);
   if (!el) return;
   el.innerHTML = '';
   const rows = [
     ...polars   .map(p => ({ label: itemLabel(p), value: formatPolarValue(p) })),
     ...deltas   .map(d => ({ label: itemLabel(d), value: formatDeltaValue(d) })),
-    ...attitudes.map(a => ({ label: itemLabel(a), value: formatAttitudeValue(a) }))
+    ...attitudes.map(a => ({ label: itemLabel(a), value: formatAttitudeValue(a) })),
+    ...extraRows
   ];
   if (rows.length) el.appendChild(buildDataTable(rows));
 }
@@ -556,10 +566,12 @@ function renderLiveSections() {
   const displayedInputs = [...fallbackInputPolars, ...fallbackInputDeltas, ...fallbackInputAttitudes];
 
   // Inputs section — raw sensor readings only (smoothing is internal to the plugin)
+  const navigationStateRows = [{ label: 'navigation.state', value: formatNavigationStateValue(learningState?.navigationState) }];
   renderGroupInto('inputs-values',
     fallbackInputPolars,
     fallbackInputDeltas,
-    fallbackInputAttitudes
+    fallbackInputAttitudes,
+    navigationStateRows
   );
   renderWarnings('inputs-warnings', displayedInputs);
 

@@ -596,6 +596,10 @@ module.exports = function (app) {
 
     navigationStateHandler = new MessageHandler(app, plugin.id, 'navigationState');
     navigationStateHandler.configure('navigation.state');
+    // navigation.state is an event path — it is only sent on transition, not on a regular
+    // period — so the generic telemetry staleness timer (which would otherwise mark it
+    // stale, and therefore not `ready`, within a few seconds of silence) does not apply.
+    navigationStateHandler.stalePeriod = 0;
     navigationStateHandler.onDelta = () => {
       handleNavigationStateDelta();
     };
