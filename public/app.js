@@ -681,6 +681,10 @@ function renderLiveSections() {
 }
 
 // ─── Polling ──────────────────────────────────────────────────────────────────
+const POLL_INTERVAL_MS = 1000;
+const MIN_POLL_INTERVAL_MS = 100;
+const MAX_POLL_INTERVAL_MS = 5000;
+let pollIntervalMs = POLL_INTERVAL_MS;
 let updateTimer = null;
 let lastTickOk = false;
 
@@ -697,6 +701,9 @@ async function tick() {
         renderSettingsPanel();
       }
       lastTickOk = true;
+      pollIntervalMs = Number.isFinite(data.pollIntervalMs) && data.pollIntervalMs > 0
+        ? Math.min(Math.max(data.pollIntervalMs, MIN_POLL_INTERVAL_MS), MAX_POLL_INTERVAL_MS)
+        : POLL_INTERVAL_MS;
       normaliseState(data);
       state.learningState = data.learningState || null;
       renderLiveSections();
@@ -716,8 +723,12 @@ async function tick() {
 }
 
 function startUpdates() {
-  if (updateTimer) clearInterval(updateTimer);
-  updateTimer = setInterval(tick, 1000);
+  if (updateTimer) clearTimeout(updateTimer);
+  const poll = async () => {
+    await tick();
+    updateTimer = setTimeout(poll, pollIntervalMs);
+  };
+  poll();
 }
 
 

@@ -262,6 +262,8 @@ module.exports = function (app) {
   let smoothedResidual = null;
   let reportFull = null;
   let table = null;
+  let calculationIntervalSmoother = null;
+  let lastCalculationTime = null;
 
   let rawHeading = null;
   let rawAttitude = null;
@@ -409,6 +411,9 @@ module.exports = function (app) {
         const payload = reportFull.report();
         payload.lifecycleWarnings = lifecycleWarnings;
         payload.learningState = getLearningStatePayload();
+        payload.pollIntervalMs = calculationIntervalSmoother?.estimate
+          ? calculationIntervalSmoother.estimate * 1000
+          : 1000;
         res.json(payload);
       }
     });
@@ -573,6 +578,8 @@ module.exports = function (app) {
     const tableFilePath = path.join(app.getDataDirPath(), tableName + '.json');
     table = loadTable(options, tableFilePath);
     minSpeed = table.step[0];
+    calculationIntervalSmoother = new ExponentialSmoother({ tau: 10 });
+    lastCalculationTime = null;
 
     //#region Handler and Polar Initialization
     const { SmootherClass, smootherOptions } = resolveSmootherConfig();
@@ -668,6 +675,12 @@ module.exports = function (app) {
       smootherOptions,
       onDelta: () => {
         clearLifecycleWarning('boatSpeed.smoothed');
+        const now = Date.now();
+        if (lastCalculationTime !== null) {
+          const interval = (now - lastCalculationTime) / 1000;
+          if (interval > 0) calculationIntervalSmoother.add(interval);
+        }
+        lastCalculationTime = now;
         // Drain any pending option changes before calculating
         if (Object.keys(changedOptions).length) applyOptionChanges();
 
