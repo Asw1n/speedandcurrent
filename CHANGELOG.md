@@ -10,6 +10,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The webapp now polls at the plugin's actual sample rate instead of a fixed 1s interval, reported via a new `pollIntervalMs` field on `/api/report`.
 - Correction estimates now fuse mature nearby table cells using their full covariance and normalized distance, with an automatically estimated spatial variance, a two-cell search radius, and fusion-weight diagnostics in the webapp.
 
+### Changed
+- Correction interpolation now includes mature cells within 2.5 normalized grid-cell units.
+
 ### Fixed
 - The boat-speed estimation inputs now prioritize Boatspeed unless groundspeed fallback is selected, and the correction table marks its most recently updated cell with a thin black border reflected in the legend.
 - The learning status Reason row is now hidden when the last observation was accepted, instead of showing a redundant "Observation recorded" message.

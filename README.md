@@ -66,7 +66,7 @@ Once configured, all consumers on the Signal K bus — KIP, OpenCPN, Instrument 
 | `environment.current.drift` | m/s | Estimated current speed. |
 | `environment.current.setTrue` | rad | Estimated current direction (the direction the water moves *toward*). |
 
-A 60-second stabilisation period applies after startup. No output is published during this window.
+A 60-second stabilisation period applies after startup. Corrected boatspeed may be published during this window, but current estimation and table learning wait until it ends.
 
 ---
 
@@ -104,7 +104,7 @@ The **Inputs** section shows live readings from the raw sensors as they arrive f
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| **Staleness Detection** | On | Mark an input as unavailable when it stops updating. Disable when testing the plugin with simulated or replayed data, where timing is irregular and would otherwise trigger spurious warnings. |
+| **Input staleness handling** | Built in | Inputs are marked stale when they stop updating, and the webapp displays a warning. `navigation.state` is an event path and is not treated as stale between state transitions. |
 
 ---
 
@@ -148,14 +148,14 @@ When **Assume Current** is enabled, the smoothed current estimate is also shown 
 
 Warnings appear here if any smoothed input is unavailable.
 
-The panel also shows whether learning is currently active, suspended, or skipped for the latest observation. Learning is automatically suspended when `navigation.state` is `anchored` or `moored` when that path is available. It can also be suspended for `motoring` if enabled in the settings. Observations below the current table speed-step threshold are skipped.
+The panel also shows whether learning is currently active, suspended, or skipped for the latest observation. Learning is normally gated by SOG: observations below the current table speed-step threshold are skipped. When **Suspend on navigation.state = motoring** is enabled and `navigation.state` is known, `anchored`, `moored`, and `motoring` suspend learning; an unavailable or unknown state falls back to the SOG gate.
 
 ### Settings
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | **Update Correction Table** | On | Master toggle. Allow the table to update from current observations. |
-| **Suspend on navigation.state = motoring** | Off | Suspend learning when `navigation.state` reports `motoring`. `anchored` and `moored` always suspend learning when that path is available. |
+| **Suspend on navigation.state = motoring** | Off | When enabled, suspend learning when a known `navigation.state` reports `anchored`, `moored`, or `motoring`. When disabled, `navigation.state` does not override the SOG-based moving check. |
 | **Stability (1–20)** | 7 | How quickly the correction table adapts to new observations. Higher = slower, more conservative. Lower = faster but noisier. See the technical section for detail. |
 | **Assume Current (experimental)** | Off | Include the running current estimate in the table update calculation. Only enable once the current estimate has had time to stabilise and tidal conditions are relatively steady. |
 | **Show Statistics (σ)** | Off | Display standard deviation alongside each smoothed value. Useful for spotting noisy sensors. |
@@ -193,9 +193,9 @@ Cell backgrounds encode the speed factor: green means the paddlewheel reads slow
 
 Empty cells have not yet received any observations and show no correction.
 
-### Active cell and neighbours
+### Active cell
 
-The **active cell** — the one most recently updated by an incoming STW sample — is shown with blue text. The weight bars show which cells contribute to the current interpolation without using cell borders as indicators.
+The **active cell** — the one most recently updated by an incoming STW sample — is shown with a black border.
 
 ### Table management
 
@@ -214,7 +214,7 @@ Multiple tables can coexist on disk; only the active one is used. This makes it 
 
 **Be patient with the correction table.** A fresh table has no data and produces no corrections. Cover a range of speeds and heel angles over a few sails and the table fills in progressively. Upwind sailing covers the heel bins well; downwind and reaching fill the low-heel, varying-speed bins.
 
-**The table learns while sailing normally.** No dedicated calibration runs are needed. Just sail with **Update Correction Table** on. Learning pauses automatically during startup stabilisation, when `navigation.state` indicates `anchored` or `moored`, optionally when it indicates `motoring`, and when SOG or STW are below the current table speed-step threshold.
+**The table learns while sailing normally.** No dedicated calibration runs are needed. Just sail with **Update Correction Table** on. Learning pauses automatically during startup stabilisation and when SOG or STW are below the current table speed-step threshold. If **Suspend on navigation.state = motoring** is enabled, a known `navigation.state` of `anchored`, `moored`, or `motoring` also pauses learning.
 
 **Port and starboard are tracked independently.** Heel is signed: starboard positive, port negative. An asymmetric paddle wheel installation will show different corrections on each tack, and the table captures this naturally.
 
@@ -246,7 +246,7 @@ The plugin combines learned cells using both their Kalman covariance and their d
 
 ```text
 cell index > 50
-cell distance <= 2
+cell distance <= 2.5
 ```
 
 For each participating cell, distance is converted into additional uncertainty:
@@ -277,9 +277,7 @@ pair q = (
 ) / 2
 ```
 
-The table uses the median pair estimate, which limits the effect of isolated rough or immature cells. At least three eligible adjacent pairs and a positive median are required. A zero or negative estimate means the observed differences do not resolve spatial variation above the cells' estimated uncertainty; because using zero would disable distance weighting, the plugin then uses a conservative fallback of `0.002 (m/s)²` per squared cell. `q` is calculated when a table is loaded and recalculated after every 600 accepted learning observations. It therefore remains constant while learning is disabled. The applied `q`, raw estimate, source, and supporting pair count are runtime diagnostics and are not saved in the correction-table file.
-
-The Correction Table view shades cells used by the latest lookup according to `trace(effective covariance)`: deepest blue is the smallest effective variance and transparent is the largest. This display value is also runtime-only.
+The table uses the median pair estimate, which limits the effect of isolated rough or immature cells. At least three eligible adjacent pairs and a positive median are required. A zero or negative estimate means the observed differences do not resolve spatial variation above the cells' estimated uncertainty; because using zero would disable distance weighting, the plugin then uses a conservative fallback of `0.002 (m/s)²` per squared cell. `q` is calculated when a table is loaded and recalculated after every 600 accepted learning observations. The applied `q`, raw estimate, source, and supporting pair count are runtime diagnostics and are not saved in the correction-table file.
 
 ### How the correction table is populated
 
@@ -287,14 +285,18 @@ Each cell is an independent **2-dimensional Kalman filter** tracking the correct
 
 Every time conditions are right — plugin running for >60 seconds, smoothers settled, speed above minimum threshold — the plugin computes an **observation** of what the correction should be:
 
-> observation = R(ψ)⁻¹ · V_SOG − R(ψ)⁻¹ · V_current − V_STW
+```text
+observation = R(ψ)⁻¹ · V_SOG − R(ψ)⁻¹ · V_current − V_STW
+```
 
-where R(ψ) rotates from ground frame to boat frame using true heading ψ. In plain terms: rotate GPS velocity into the boat frame, subtract the current estimate (also rotated), subtract the raw paddle wheel velocity. The residual is the implied sensor error for the current speed and heel.
+where `R(ψ)` rotates from ground frame to boat frame using true heading `ψ`. In plain terms: rotate GPS velocity into the boat frame, subtract the current estimate (also rotated), subtract the raw paddle wheel velocity. The residual is the implied sensor error for the current speed and heel.
 
 The Kalman update combines this observation with the cell's existing belief:
 
-> K = P · (P + R_obs)⁻¹
-> x_new = x_old + K · (observation − x_old)
+```text
+K = P · (P + R_obs)⁻¹
+x_new = x_old + K · (observation − x_old)
+```
 
 where P is the cell's current covariance and R_obs is the observation covariance derived from the measurement uncertainty of all contributing signals (SOG variance + current variance + STW variance, rotated appropriately). **Noisy observations produce a smaller gain and move the cell estimate less.**
 
@@ -302,7 +304,9 @@ where P is the cell's current covariance and R_obs is the observation covariance
 
 Each cell has a small **process noise** that allows it to drift slowly over time, reflecting that a paddle wheel's error can change with fouling, recalibration, or crew weight distribution. Process noise is:
 
-> Q = 10^(−stability)
+```text
+Q = 10^(−stability)
+```
 
 With stability = 7 (default), Q = 10⁻⁷, making the cell very resistant to change — it effectively averages hundreds of observations before settling. Stability 4–5 makes the table react faster to recent conditions; stability 10–12 is appropriate for a well-characterised boat that changes rarely.
 
@@ -312,7 +316,9 @@ In practical terms: high stability = trust the accumulated history; low stabilit
 
 Current is estimated as:
 
-> V_current = V_SOG − R(ψ) · V_STW_corrected
+```text
+V_current = V_SOG − R(ψ) · V_STW_corrected
+```
 
 The corrected STW vector is rotated into the ground frame using heading, then subtracted from the GPS velocity. The residual is the water velocity.
 

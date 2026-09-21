@@ -570,6 +570,18 @@ function renderItemsInto(elId, items) {
   if (rows.length) el.appendChild(buildDataTable(rows));
 }
 
+function formatSpatialVariance(table) {
+  if (!Number.isFinite(table?.q)) return null;
+  const pairCount = Number.isInteger(table.qPairCount) ? table.qPairCount : 0;
+  const rawEstimate = Number.isFinite(table.qEstimate)
+    ? `; raw estimate ${table.qEstimate.toExponential(3)} from ${pairCount} adjacent pairs`
+    : `; ${pairCount} eligible adjacent pairs`;
+  const source = table.qSource === 'derived'
+    ? `derived from ${pairCount} adjacent pairs`
+    : `fallback${rawEstimate}`;
+  return `${table.q.toExponential(3)} (${source})`;
+}
+
 function renderLiveSections() {
   const learningState = state.learningState || null;
   const inputPolars = filterById(state.polarsAll, ['groundSpeed']);
@@ -603,7 +615,13 @@ function renderLiveSections() {
   renderItemsInto('estimation-inputs', estimationInputs);
   // Estimation — intermediates
   const estimationIntermediates = filterById(state.polarsAll, ['boatSpeedRefGround', 'speedCorrection', 'residual', 'residual.smoothed']);
-  renderGroupInto('estimation-intermediates', estimationIntermediates, [], []);
+  const spatialVariance = config?.showStatistics
+    ? formatSpatialVariance(Object.values(state.tablesById)[0])
+    : null;
+  const statisticRows = spatialVariance === null
+    ? []
+    : [{ label: 'Spatial variance q', value: spatialVariance }];
+  renderGroupInto('estimation-intermediates', estimationIntermediates, [], [], statisticRows);
   // Estimation — outputs
   const estimationOutputs = filterById(state.polarsAll, ['correctedBoatSpeed', 'current.smoothed']);
   renderGroupInto('estimation-outputs', estimationOutputs, [], []);
@@ -693,20 +711,6 @@ function renderLiveSections() {
       heelSymbol:  angleC.symbol,
     };
     const tables = Object.values(state.tablesById);
-    const qEl = document.getElementById('table-q');
-    if (qEl) {
-      const activeTable = tables[0];
-      if (Number.isFinite(activeTable?.q)) {
-        const pairCount = Number.isInteger(activeTable.qPairCount) ? activeTable.qPairCount : 0;
-        const rawEstimate = Number.isFinite(activeTable.qEstimate)
-          ? `; raw estimate ${activeTable.qEstimate.toExponential(3)} from ${pairCount} adjacent pairs`
-          : `; ${pairCount} eligible adjacent pairs`;
-        const source = activeTable.qSource === 'derived' ? `derived from ${pairCount} adjacent pairs` : `fallback${rawEstimate}`;
-        qEl.textContent = `Spatial variance q: ${activeTable.q.toExponential(3)} (${source})`;
-      } else {
-        qEl.textContent = '';
-      }
-    }
     tables.forEach(t => tableEl.appendChild(tableRenderer.render(t, tableOpts)));
   }
 }

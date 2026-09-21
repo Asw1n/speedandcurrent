@@ -1,7 +1,7 @@
 const { Table2D} = require('signalkutilities');
 const { KalmanFilter, State } = require('kalman-filter');
 
-const MAX_INTERPOLATION_DISTANCE = 2;
+const MAX_INTERPOLATION_DISTANCE = 2.5;
 const MIN_CELL_INDEX = 50;
 const Q_RECALCULATION_INTERVAL = 600;
 const MIN_Q_PAIR_COUNT = 3;
