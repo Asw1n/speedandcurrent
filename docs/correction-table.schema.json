@@ -27,7 +27,8 @@
       "description": "Heel axis. The column index increases from minimum to maximum heel."
     },
     "parameters": {
-      "$ref": "#/$defs/filterParameters"
+      "$ref": "#/$defs/filterParameters",
+      "description": "Kalman filter model descriptor. `covariance` fields are never functions — they are either fixed matrices (legacy) or the literal marker \"per-observation\" (current), meaning the actual measurement-noise covariance is computed live in CorrectionEstimator.update() from sensor variances and is not persisted."
     },
     "table": {
       "type": "array",
@@ -65,6 +66,39 @@
       }
     },
     "filterParameters": {
+      "oneOf": [
+        { "$ref": "#/$defs/filterParametersV2" },
+        { "$ref": "#/$defs/filterParametersLegacy" }
+      ],
+      "description": "V2 (current) is written by all tables saved after per-observation covariance support was added. Legacy is what earlier versions of the plugin wrote; files in that format still load — the observation.covariance matrix they contain was never actually used for filtering and is ignored on load."
+    },
+    "filterParametersV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stability", "observation", "dynamic"],
+      "properties": {
+        "stability": {
+          "type": "number",
+          "description": "Determines the process-noise (Q) magnitude: 10^-stability."
+        },
+        "observation": { "$ref": "#/$defs/observationParametersV2" },
+        "dynamic": { "$ref": "#/$defs/dynamicParameters" }
+      }
+    },
+    "observationParametersV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stateProjection", "covariance", "dimension"],
+      "properties": {
+        "stateProjection": { "$ref": "#/$defs/matrix2" },
+        "covariance": {
+          "const": "per-observation",
+          "description": "Marker only. The measurement-noise covariance (R) is computed per observation from live sensor variances and supplied to the filter at runtime; it is not a persisted value."
+        },
+        "dimension": { "const": 2 }
+      }
+    },
+    "filterParametersLegacy": {
       "type": "object",
       "additionalProperties": false,
       "required": ["observation", "dynamic"],

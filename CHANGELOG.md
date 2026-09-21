@@ -21,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Webapp report parsing failures now remain visible and still refresh plugin status instead of aborting the polling tick.
 - Disabled current estimation no longer publishes a zero-current value during plugin startup.
 - Malformed correction tables now recover safely at startup, while explicit loads reject invalid files without replacing the active table.
+- The correction-table Kalman filter now uses each observation's own measurement-noise covariance (already computed from live sensor variances) instead of a fixed identity matrix, so anisotropic and rotated observation uncertainty is correctly reflected in cell covariances. Persisted tables store a serializable model descriptor rather than the runtime model; existing table files still load unchanged.
 
 ## [2.3.4] - 2026-09-17
 

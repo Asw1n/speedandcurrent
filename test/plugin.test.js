@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { CorrectionTable } = require('../correctionTable.js');
+const { CorrectionTable, CorrectionEstimator } = require('../correctionTable.js');
 
 // ---------------------------------------------------------------------------
 // App shim helpers
@@ -224,6 +224,133 @@ describe('correction table covariance interpolation', () => {
 
     assert.strictEqual(recalculations, 1);
     assert.strictEqual(table.acceptedObservationsSinceQ, 0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CorrectionEstimator: per-observation covariance
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds the (groundSpeed, current, boatSpeed, heading) inputs expected by
+ * CorrectionEstimator.update(). `variance` fields are diagonal [xVar, yVar] pairs,
+ * matching the shape produced by signalkutilities handlers.
+ */
+function makeUpdateInputs({
+  groundVector = [5, 0],
+  groundVariance = [0.01, 0.01],
+  currentVector = [0, 0],
+  currentVariance = [0.0001, 0.0001],
+  boatVector = [5, 0],
+  boatVariance = [0.0001, 0.0001],
+  heading = 0,
+} = {}) {
+  return {
+    groundSpeed: { vector: groundVector, variance: groundVariance, xVariance: groundVariance[0], yVariance: groundVariance[1] },
+    current: { vector: currentVector, variance: currentVariance, xVariance: currentVariance[0], yVariance: currentVariance[1] },
+    boatSpeed: { vector: boatVector, xVariance: boatVariance[0], yVariance: boatVariance[1] },
+    heading,
+  };
+}
+
+function newEstimator(stability = 7, initialState = { mean: [[0], [0]], covariance: [[1, 0], [0, 1]], index: 5 }) {
+  return new CorrectionEstimator(CorrectionEstimator.getFilterModel(stability), initialState);
+}
+
+describe('CorrectionEstimator per-observation covariance', () => {
+  it('produces different state covariances for different observation covariances', () => {
+    const confident = newEstimator();
+    const uncertain = newEstimator();
+
+    const confidentInputs = makeUpdateInputs({ groundVariance: [0.0001, 0.0001] });
+    const uncertainInputs = makeUpdateInputs({ groundVariance: [1, 1] });
+
+    assert.strictEqual(confident.update(confidentInputs.groundSpeed, confidentInputs.current, confidentInputs.boatSpeed, confidentInputs.heading), true);
+    assert.strictEqual(uncertain.update(uncertainInputs.groundSpeed, uncertainInputs.current, uncertainInputs.boatSpeed, uncertainInputs.heading), true);
+
+    assert.notDeepStrictEqual(confident.covariance, uncertain.covariance);
+    const traceConfident = confident.covariance[0][0] + confident.covariance[1][1];
+    const traceUncertain = uncertain.covariance[0][0] + uncertain.covariance[1][1];
+    assert.ok(traceConfident < traceUncertain, 'a smaller observation covariance should yield a more confident posterior');
+  });
+
+  it('produces nonzero cross-covariance from a rotated anisotropic observation covariance', () => {
+    const estimator = newEstimator();
+    // Heading rotates groundVector so the observation stays near the prior mean (0,0), keeping the
+    // Mahalanobis gate open, while still rotating the anisotropic groundVariance into off-diagonal terms.
+    const heading = Math.PI / 4;
+    const groundVector = [5 / Math.sqrt(2), 5 / Math.sqrt(2)];
+    const inputs = makeUpdateInputs({ groundVector, groundVariance: [1, 0.0001], heading });
+
+    assert.strictEqual(estimator.update(inputs.groundSpeed, inputs.current, inputs.boatSpeed, inputs.heading), true);
+
+    assert.ok(Math.abs(estimator.covariance[0][1]) > 1e-6, 'expected a nonzero off-diagonal term');
+    assert.ok(Math.abs(estimator.covariance[0][1] - estimator.covariance[1][0]) < 1e-9, 'covariance must stay symmetric');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CorrectionTable persistence
+// ---------------------------------------------------------------------------
+
+describe('correction table persistence', () => {
+  it('round-trips cell mean, covariance and index through save/load', () => {
+    const table = new CorrectionTable('test', { min: 0, max: 1, step: 1 }, { min: 0, max: 0, step: 1 }, 7);
+    const inputs = makeUpdateInputs({ heading: Math.PI / 6, groundVariance: [0.05, 0.2] });
+    // The estimator's index only starts counting from the second accepted observation onward
+    // (see CorrectionEstimator.update / kalman-filter's predict()); two updates ensure N > 0
+    // so the cell is actually persisted rather than serialized as { state: null }.
+    table.update(0, 0, inputs.groundSpeed, inputs.current, inputs.boatSpeed, inputs.heading);
+    table.update(0, 0, inputs.groundSpeed, inputs.current, inputs.boatSpeed, inputs.heading);
+
+    const originalCell = table.getCell(0, 0);
+    assert.ok(originalCell.N > 0, 'precondition: cell must be persisted (N > 0)');
+    const json = JSON.parse(JSON.stringify(table.toJSON()));
+    const loaded = CorrectionTable.fromJSON(json, 7);
+    const loadedCell = loaded.getCell(0, 0);
+
+    assert.strictEqual(loadedCell.N, originalCell.N);
+    assert.ok(Math.abs(loadedCell.x - originalCell.x) < 1e-12);
+    assert.ok(Math.abs(loadedCell.y - originalCell.y) < 1e-12);
+    assert.deepStrictEqual(loadedCell.covariance, originalCell.covariance);
+  });
+
+  it('persists a serializable model descriptor instead of the runtime callback', () => {
+    const table = new CorrectionTable('test', { min: 0, max: 0, step: 1 }, { min: 0, max: 0, step: 1 }, 7);
+    const json = JSON.parse(JSON.stringify(table.toJSON()));
+
+    assert.strictEqual(json.parameters.stability, 7);
+    assert.strictEqual(json.parameters.observation.covariance, 'per-observation');
+    assert.strictEqual(typeof json.parameters.observation.covariance, 'string');
+  });
+
+  it('still loads existing table files saved in the legacy (fixed-covariance) format', () => {
+    const legacyJson = {
+      id: 'legacy',
+      row: { min: 0, max: 0, step: 1 },
+      col: { min: 0, max: 0, step: 1 },
+      parameters: {
+        observation: {
+          stateProjection: [[1, 0], [0, 1]],
+          covariance: [[1, 0], [0, 1]],
+          dimension: 2,
+        },
+        dynamic: {
+          transition: [[1, 0], [0, 1]],
+          covariance: [0.0000001, 0.0000001],
+        },
+      },
+      table: [[correctionState(0.2, -0.1, 0.01, 60)]],
+      displayAttributes: {},
+    };
+
+    const table = CorrectionTable.fromJSON(legacyJson, 7);
+    const cell = table.getCell(0, 0);
+
+    assert.strictEqual(cell.N, 60);
+    assert.ok(Math.abs(cell.x - 0.2) < 1e-12);
+    assert.ok(Math.abs(cell.y - (-0.1)) < 1e-12);
+    assert.doesNotThrow(() => table.getCorrection(0, 0));
   });
 });
 

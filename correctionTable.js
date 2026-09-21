@@ -7,6 +7,8 @@ const Q_RECALCULATION_INTERVAL = 600;
 const MIN_Q_PAIR_COUNT = 3;
 const DEFAULT_Q = 0.002;
 const COVARIANCE_FLOOR = 1e-9;
+const OBSERVATION_STATE_PROJECTION = [[1, 0], [0, 1]]; // observation matrix H
+const DYNAMIC_TRANSITION = [[1, 0], [0, 1]]; // state transition matrix F
 
 // Module-level helpers — avoids creating new Function objects on every Kalman update call
 function _rotateValue(cos, sin, vector) {
@@ -132,6 +134,10 @@ class CorrectionTable extends Table2D{
 
   constructor(id, row, col, stability=5) {
     super(id, row, col, CorrectionEstimator, CorrectionEstimator.getFilterModel(stability));
+    // Table2D persists the constructor param verbatim as `this.parameters`. The live filter model
+    // carries a runtime callback for observation.covariance, which JSON.stringify would silently
+    // drop. Replace it with a serializable descriptor so persisted files stay honest.
+    this.parameters = CorrectionEstimator.getModelDescriptor(stability);
     this.lastUpdatedCell = null;
     this.lastUpdateResult = null;
     this.neighbours = [];
@@ -321,13 +327,35 @@ class CorrectionEstimator {
   static getFilterModel(stability = 5) {
     return {
       observation: {
-        stateProjection: [[1, 0], [0, 1]], // observation matrix H
-        covariance: [[1, 0], [0, 1]], //measurement noise R
+        stateProjection: OBSERVATION_STATE_PROJECTION,
+        // Measurement noise R is computed per observation in update() from live sensor
+        // variances (see observationCovariance below) and supplied to the filter through
+        // the `observationCovariance` option, rather than being a fixed matrix.
+        covariance: (options) => options.observationCovariance,
         dimension: 2
       },
       dynamic: {
-        transition: [[1, 0], [0, 1]], // state transition matrix F
+        transition: DYNAMIC_TRANSITION, // state transition matrix F
         covariance: [1/10**stability, 1/10**stability],// process noise covariance matrix Q
+      }
+    };
+  }
+
+  /**
+   * Serializable descriptor of the filter model, stored in table.parameters for persistence.
+   * Unlike getFilterModel(), this never contains functions.
+   */
+  static getModelDescriptor(stability = 5) {
+    return {
+      stability,
+      observation: {
+        stateProjection: OBSERVATION_STATE_PROJECTION,
+        covariance: 'per-observation', // actual R supplied at runtime by CorrectionEstimator.update()
+        dimension: 2
+      },
+      dynamic: {
+        transition: DYNAMIC_TRANSITION,
+        covariance: [1/10**stability, 1/10**stability]
       }
     };
   }
@@ -437,4 +465,4 @@ class CorrectionEstimator {
 }
 
 
-module.exports = { CorrectionTable };
+module.exports = { CorrectionTable, CorrectionEstimator };
