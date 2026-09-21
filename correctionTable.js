@@ -25,6 +25,20 @@ function _rotateVariance(cos, sin, vector) {
   ];
 }
 
+function _addHeadingVariance(covariance, groundVector, currentVector, headingVariance) {
+  const variance = Number.isFinite(headingVariance) && headingVariance >= 0 ? headingVariance : 0;
+  if (variance === 0) return covariance;
+
+  const ux = groundVector[0] - currentVector[0];
+  const uy = groundVector[1] - currentVector[1];
+  const jx = uy;
+  const jy = -ux;
+  return [
+    [covariance[0][0] + jx * variance * jx, covariance[0][1] + jx * variance * jy],
+    [covariance[1][0] + jy * variance * jx, covariance[1][1] + jy * variance * jy]
+  ];
+}
+
 function _median(values) {
   const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
   if (sorted.length === 0) return null;
@@ -148,9 +162,9 @@ class CorrectionTable extends Table2D{
     this.acceptedObservationsSinceQ = 0;
   }
   
-  update(speed, heel, groundSpeed, current, boatSpeed, heading) {
+  update(speed, heel, groundSpeed, current, boatSpeed, heading, headingVariance) {
     const cell = this.getCell(speed, heel);
-    const accepted = cell?.update(groundSpeed, current, boatSpeed, heading);
+    const accepted = cell?.update(groundSpeed, current, boatSpeed, heading, headingVariance);
     this.lastUpdatedCell = cell;
     this.lastUpdateResult = accepted === true ? 'accepted' : 'rejected';
     if (accepted === true) {
@@ -369,7 +383,7 @@ class CorrectionEstimator {
     }
   }
   
-  update(groundSpeed, current, boatSpeed, heading) {
+  update(groundSpeed, current, boatSpeed, heading, headingVariance) {
     if(groundSpeed.xVariance == null || groundSpeed.yVariance == null ||
        current.xVariance == null || current.yVariance == null ||
        boatSpeed.xVariance == null || boatSpeed.yVariance == null ) {
@@ -392,13 +406,19 @@ class CorrectionEstimator {
     var currentCov = _rotateVariance(cosTheta, sinTheta, current.variance);
     var boatCov = [[boatSpeed.xVariance, 0], [0, boatSpeed.yVariance]];
 
-    const observationCovariance = [[
+    let observationCovariance = [[
       groundCov[0][0] + currentCov[0][0] + boatCov[0][0],
       groundCov[0][1] + currentCov[0][1] + boatCov[0][1]],
     [
       groundCov[1][0] + currentCov[1][0] + boatCov[1][0],
       groundCov[1][1] + currentCov[1][1] + boatCov[1][1]],
     ];
+    observationCovariance = _addHeadingVariance(
+      observationCovariance,
+      groundVector,
+      currentVector,
+      headingVariance
+    );
     // Mahalanobis distance check.
     // For empty cells (filterState === null) we use a diffuse prior — mean (0,0),
     // variance DIFFUSE_PRIOR_VAR — expressing "assume no correction needed, but

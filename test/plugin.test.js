@@ -244,12 +244,14 @@ function makeUpdateInputs({
   boatVector = [5, 0],
   boatVariance = [0.0001, 0.0001],
   heading = 0,
+  headingVariance,
 } = {}) {
   return {
     groundSpeed: { vector: groundVector, variance: groundVariance, xVariance: groundVariance[0], yVariance: groundVariance[1] },
     current: { vector: currentVector, variance: currentVariance, xVariance: currentVariance[0], yVariance: currentVariance[1] },
     boatSpeed: { vector: boatVector, xVariance: boatVariance[0], yVariance: boatVariance[1] },
     heading,
+    headingVariance,
   };
 }
 
@@ -258,6 +260,95 @@ function newEstimator(stability = 7, initialState = { mean: [[0], [0]], covarian
 }
 
 describe('CorrectionEstimator per-observation covariance', () => {
+  function captureObservationCovariance(inputs) {
+    const estimator = newEstimator();
+    let covariance;
+    estimator.filter.filter = ({ observationCovariance }) => {
+      covariance = observationCovariance;
+      return estimator.filterState;
+    };
+    assert.strictEqual(
+      estimator.update(
+        inputs.groundSpeed,
+        inputs.current,
+        inputs.boatSpeed,
+        inputs.heading,
+        inputs.headingVariance
+      ),
+      true
+    );
+    return covariance;
+  }
+
+  it('leaves covariance unchanged when heading variance is zero or missing', () => {
+    const base = captureObservationCovariance(makeUpdateInputs({ headingVariance: 0 }));
+    const missing = captureObservationCovariance(makeUpdateInputs());
+
+    assert.deepStrictEqual(missing, base);
+    for (const headingVariance of [-1, NaN, Infinity, -Infinity]) {
+      assert.deepStrictEqual(
+        captureObservationCovariance(makeUpdateInputs({ headingVariance })),
+        base
+      );
+    }
+  });
+
+  it('adds heading uncertainty in the Jacobian direction once', () => {
+    const inputs = makeUpdateInputs({
+      groundVector: [3, 4],
+      currentVector: [1, 1],
+      boatVector: [2, 3],
+      headingVariance: 0.5,
+    });
+    const base = captureObservationCovariance({ ...inputs, headingVariance: 0 });
+    const withHeading = captureObservationCovariance(inputs);
+    const expected = [[4.5, -3], [-3, 2]];
+
+    assert.deepStrictEqual(withHeading.map((row, rowIndex) => row.map((value, columnIndex) =>
+      value - base[rowIndex][columnIndex]
+    )), expected);
+  });
+
+  it('keeps heading-derived covariance symmetric and finite', () => {
+    const covariance = captureObservationCovariance(makeUpdateInputs({
+      groundVector: [3, 4],
+      currentVector: [1, 1],
+      boatVector: [2, 3],
+      headingVariance: 0.5,
+    }));
+
+    assert.ok(covariance.flat().every(Number.isFinite));
+    assert.strictEqual(covariance[0][1], covariance[1][0]);
+  });
+
+  it('adds no heading-derived covariance when ground speed equals current', () => {
+    const base = captureObservationCovariance(makeUpdateInputs({ headingVariance: 0 }));
+    const withHeading = captureObservationCovariance(makeUpdateInputs({
+      groundVector: [2, 3],
+      currentVector: [2, 3],
+      boatVector: [0, 0],
+      headingVariance: 10,
+    }));
+
+    assert.deepStrictEqual(withHeading, base);
+  });
+
+  it('treats heading uncertainty as one shared error on ground speed minus current', () => {
+    const inputs = makeUpdateInputs({
+      groundVector: [3, 4],
+      currentVector: [1, 1],
+      boatVector: [2, 3],
+      headingVariance: 0.5,
+    });
+    const base = captureObservationCovariance({ ...inputs, headingVariance: 0 });
+    const withHeading = captureObservationCovariance(inputs);
+    const delta = withHeading.map((row, rowIndex) => row.map((value, columnIndex) =>
+      value - base[rowIndex][columnIndex]
+    ));
+
+    assert.deepStrictEqual(delta, [[4.5, -3], [-3, 2]]);
+  });
+
   it('produces different state covariances for different observation covariances', () => {
     const confident = newEstimator();
     const uncertain = newEstimator();

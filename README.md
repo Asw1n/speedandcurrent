@@ -298,7 +298,7 @@ K = P · (P + R_obs)⁻¹
 x_new = x_old + K · (observation − x_old)
 ```
 
-where P is the cell's current covariance and R_obs is the observation covariance derived from the measurement uncertainty of all contributing signals (SOG variance + current variance + STW variance, rotated appropriately). **Noisy observations produce a smaller gain and move the cell estimate less.**
+where P is the cell's current covariance and R_obs is the observation covariance derived from the measurement uncertainty of all contributing signals (SOG variance + current variance + STW variance, rotated appropriately). It also includes heading uncertainty in radians squared. For $u = R(-heading)(groundSpeed - current)$, the heading contribution is $J \sigma_h^2 J^T$, where $J = [u_y, -u_x]^T$. This is applied once to the combined ground-speed-minus-current vector because both vectors share the same heading error. **Noisy observations produce a smaller gain and move the cell estimate less.**
 
 ### The stability setting in detail
 

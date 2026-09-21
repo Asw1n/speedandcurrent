@@ -988,7 +988,15 @@ module.exports = function (app) {
       return;
     }
 
-    table.update(smoothedBoatSpeed.value, smoothedAttitude.value?.roll, smoothedGroundSpeed, options.assumeCurrent ? smoothedCurrent : noCurrent, lrnBoatSpeed, smoothedHeading.value);
+    table.update(
+      smoothedBoatSpeed.value,
+      smoothedAttitude.value?.roll,
+      smoothedGroundSpeed,
+      options.assumeCurrent ? smoothedCurrent : noCurrent,
+      lrnBoatSpeed,
+      smoothedHeading.value,
+      smoothedHeading.variance
+    );
     if (table.lastUpdateResult === 'accepted') {
       setObservationStatus('accepted', 'accepted');
     } else if (table.lastUpdateResult === 'rejected') {
