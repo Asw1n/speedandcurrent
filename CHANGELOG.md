@@ -7,11 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## Unreleased
 
 ### Added
+- Correction-table files now use version 2 with per-cell update timestamps, capped time-based aging, and silent migration of existing version-1 files.
 - The webapp now polls at the plugin's actual sample rate instead of a fixed 1s interval, reported via a new `pollIntervalMs` field on `/api/report`.
 - Correction estimates now fuse mature nearby table cells using their full covariance and normalized distance, with an automatically estimated spatial variance, a two-cell search radius, and fusion-weight diagnostics in the webapp.
 
 ### Changed
 - Correction interpolation now includes mature cells within 2.5 normalized grid-cell units.
+- Correction learning now always uses a moving-average window of at least 5 seconds, with a one-second gap between observation windows. Older smoother selections migrate silently.
+- Cells become eligible after one accepted observation; the explicit maturity gate remains in place at zero for future tuning.
 
 ### Fixed
 - The boat-speed estimation inputs now prioritize Boatspeed unless groundspeed fallback is selected, and the correction table marks its most recently updated cell with a thin black border reflected in the legend.

@@ -160,7 +160,7 @@ The panel also shows whether learning is currently active, suspended, or skipped
 | **Assume Current (experimental)** | Off | Include the running current estimate in the table update calculation. Only enable once the current estimate has had time to stabilise and tidal conditions are relatively steady. |
 | **Show Statistics (σ)** | Off | Display standard deviation alongside each smoothed value. Useful for spotting noisy sensors. |
 
-### Smoother settings
+### Smoothing and learning cadence
 
 Controls how raw sensor values are averaged before being used for table updates. These settings have no effect on the published corrected values — only on the inputs to the learning algorithm.
 
@@ -168,12 +168,9 @@ The smoother serves a second purpose beyond noise reduction: its output variance
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| **Smoother Type** | Moving average | Moving Average (window), Exponential decay (τ), or Kalman filter. Moving average is the most predictable. |
-| **Window size** | 5 s | (Moving average) Integration window. Larger = smoother but slower to respond. Minimum 2 s. |
-| **Time constant (τ)** | 3 s | (Exponential) Decay time constant. Larger = smoother. Minimum 1 s. |
-| **Kalman gain** | 0.2 | (Kalman) Steady-state gain. Lower = smoother / slower. Range 0.01–0.99. |
+| **Window size** | 5 s | Moving-average integration window. Larger = smoother but slower to respond. Minimum 5 s. |
 
-A 5-second moving average window suits typical 1 Hz instrument update rates. In rough conditions with high sensor noise, increasing it to 8–10 seconds may improve table quality at the cost of temporal resolution.
+A 5-second moving average window suits typical 1 Hz instrument update rates. Learning attempts occur every `window + 1 second`, leaving a one-second gap between observation windows. In rough conditions with high sensor noise, increasing the window to 8–10 seconds may improve table quality at the cost of temporal resolution. Older configurations that selected another smoother are silently converted to moving average; their valid window duration is retained and shorter values are clamped to 5 seconds.
 
 ---
 
@@ -207,6 +204,12 @@ The **active cell** — the one most recently updated by an incoming STW sample 
 | **Resize** | Change the speed/heel range or step size. Existing cell values are resampled onto the new grid — nothing is lost, but resampled cells benefit from a few more observations to consolidate on the new grid. |
 
 Multiple tables can coexist on disk; only the active one is used. This makes it straightforward to keep separate tables for different configurations such as racing vs. cruising sails, or before and after antifouling.
+
+### Correction-table file formats
+
+The original format is schema version 1. It remains available as [`docs/correction-table-v1.schema.json`](docs/correction-table-v1.schema.json), while [`docs/correction-table.schema.json`](docs/correction-table.schema.json) is retained as the compatible legacy filename. New and saved tables use schema version 2, documented in [`docs/correction-table-v2.schema.json`](docs/correction-table-v2.schema.json). Version 2 adds a top-level `schemaVersion: 2`, the current serializable model descriptor, and `lastAcceptedAt` epoch milliseconds on every cell; empty cells use `null`.
+
+Version 1 files, including older files without a version field, are migrated silently on load. Since individual legacy cell ages are unknown, the file modification time is assigned to every learned cell as a conservative approximation. If that timestamp is unavailable, load time is used and the fallback is written only to debug logging. Migration preserves table identity, dimensions, display attributes, means, covariance, and indices, and is persisted atomically only after the table has loaded successfully.
 
 ---
 
@@ -245,7 +248,7 @@ When a new paddle wheel sample arrives the plugin:
 The plugin combines learned cells using both their Kalman covariance and their distance from the requested speed and heel. Speed and heel distances are divided by their respective grid steps, so distance is measured in dimensionless cell units. A cell participates only when:
 
 ```text
-cell index > 50
+cell index > 0
 cell distance <= 2.5
 ```
 
@@ -268,7 +271,7 @@ This gives nearby, mature cells the greatest influence. A fresh table borrows in
 
 #### Automatic spatial variance (`q`)
 
-`q` describes how much genuine correction variation is expected between adjacent cells, in correction variance per squared cell. It is calculated without user input from horizontal and vertical pairs where both cells have an index greater than 50. For each adjacent pair:
+`q` describes how much genuine correction variation is expected between adjacent cells, in correction variance per squared cell. It is calculated without user input from horizontal and vertical pairs where both cells have an index greater than 0. A cell with one accepted observation is therefore eligible while the explicit maturity threshold remains available for future tuning. For each adjacent pair:
 
 ```text
 pair q = (
@@ -300,15 +303,16 @@ x_new = x_old + K · (observation − x_old)
 
 where P is the cell's current covariance and R_obs is the observation covariance derived from the measurement uncertainty of all contributing signals (SOG variance + current variance + STW variance, rotated appropriately). It also includes heading uncertainty in radians squared. For $u = R(-heading)(groundSpeed - current)$, the heading contribution is $J \sigma_h^2 J^T$, where $J = [u_y, -u_x]^T$. This is applied once to the combined ground-speed-minus-current vector because both vectors share the same heading error. **Noisy observations produce a smaller gain and move the cell estimate less.**
 
-### The stability setting in detail
+### Time-scaled aging and stability
 
-Each cell has a small **process noise** that allows it to drift slowly over time, reflecting that a paddle wheel's error can change with fouling, recalibration, or crew weight distribution. Process noise is:
+Each cell has a small **process-noise rate** that allows it to drift slowly over time, reflecting that a paddle wheel's error can change with fouling, recalibration, or crew weight distribution. For an elapsed interval `dt`, the process covariance added to each diagonal is:
 
 ```text
-Q = 10^(−stability)
+effectiveDt = min(dt, 90 days)
+Q(dt) = 10^(−stability) × effectiveDt × I
 ```
 
-With stability = 7 (default), Q = 10⁻⁷, making the cell very resistant to change — it effectively averages hundreds of observations before settling. Stability 4–5 makes the table react faster to recent conditions; stability 10–12 is appropriate for a well-characterised boat that changes rarely.
+With stability = 7 (default), the process-noise rate is 10⁻⁷ per second. Offline time counts toward aging, but aging stops after the internal 90-day cap. Aged covariance is calculated when gating, filtering, interpolation, spatial-q estimation, and reporting; stored covariance is not mutated by reads. Rejected observations do not advance a cell timestamp; accepted observations store the posterior covariance and current UTC epoch-millisecond timestamp.
 
 In practical terms: high stability = trust the accumulated history; low stability = trust recent observations more.
 
