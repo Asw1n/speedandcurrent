@@ -156,7 +156,7 @@ The panel also shows whether learning is currently active, suspended, or skipped
 |---------|---------|-------------|
 | **Update Correction Table** | On | Master toggle. Allow the table to update from current observations. |
 | **Suspend on navigation.state = motoring** | Off | When enabled, suspend learning when a known `navigation.state` reports `anchored`, `moored`, or `motoring`. When disabled, `navigation.state` does not override the SOG-based moving check. |
-| **Correction drift** | 0.3 knots/month | Typical one-sigma drift allowed in the learned correction over one 30-day month. Higher values adapt faster but are less stable. Range: 0.0–3.0 knots/month. |
+| **Correction drift** | 0.3 knots/month | How quickly the correction may change over time (knots/month). 0.3 knots/month means the correction can typically change by about 0.3 knots over a month. Higher values adapt faster but may be less stable. Range: 0.0–3.0 knots/month. |
 | **Assume Current (experimental)** | Off | Include the running current estimate in the table update calculation. Only enable once the current estimate has had time to stabilise and tidal conditions are relatively steady. |
 | **Show Statistics (σ)** | Off | Display standard deviation alongside each smoothed value. Useful for spotting noisy sensors. |
 

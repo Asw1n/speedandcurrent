@@ -305,7 +305,7 @@ const paramMeta = {
   suspendLearningOnNavigationState: { label: 'Suspend on navigation.state', type: 'boolean', description: 'When enabled, navigation.state can override the vessel\u2019s own SOG-based moving/not-moving state: anchored, moored, or motoring are treated as not moving (learning suspended, leeway zeroed). It can never force "moving" when SOG says otherwise.' },
   assumeCurrent:         { label: 'Assume current during update',         type: 'boolean', description: 'Experimental, works best when currents are relatively stable.' },
   sogFallback:           { label: 'Groundspeed fallback',                 type: 'boolean', description: 'Output Groundspeed as Boatspeed when the paddlewheel sensor is malfunctioning or stalled.' },
-  correctionDriftRate:   { label: 'Correction drift',                    type: 'number', unit: 'knots/month', min: 0, max: 3, step: 0.1, default: 0.3, description: 'Typical one-sigma drift allowed in the learned correction over one 30-day month.' },
+  correctionDriftRate:   { label: 'Correction drift',                    type: 'number', unit: 'knots/month', min: 0, max: 3, step: 0.1, default: 0.3, description: 'How quickly the correction may change over time (knots/month). 0.3 knots/month means the correction can typically change by about 0.3 knots over a month.' },
   showStatistics:        { label: 'Show statistics (σ)',                  type: 'boolean', description: 'Display standard deviation alongside smoothed values for debugging.' },
   smootherTimeSpan: {
     label: 'Window size', type: 'number', unit: 's',
