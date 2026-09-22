@@ -5,7 +5,8 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { CorrectionTable, CorrectionEstimator } = require('../correctionTable.js');
+const { State } = require('kalman-filter');
+const { CorrectionTable, CorrectionEstimator, MAX_AGING_SECONDS, MIN_CELL_INDEX } = require('../correctionTable.js');
 
 // ---------------------------------------------------------------------------
 // App shim helpers
@@ -188,14 +189,20 @@ describe('correction table covariance interpolation', () => {
     assert.strictEqual(table.qSource, 'fallback');
   });
 
-  it('uses only cells within two cell units with index greater than 50', () => {
-    const cells = Array.from({ length: 7 }, (_, row) => [correctionState(row, 0, 0.01, row === 2 ? 50 : 51)]);
+  it('uses learned cells within 2.5 cell units when index is greater than zero', () => {
+    const cells = Array.from({ length: 7 }, (_, row) => [correctionState(row, 0, 0.01, row === 3 ? 0 : 1)]);
     const table = correctionTableFromCells(cells);
 
     table.getCorrection(0, 0);
 
-    assert.deepStrictEqual(table.neighbours.map(neighbour => neighbour.row), [0, 1]);
-    assert.ok(table.neighbours.every(neighbour => neighbour.dist <= 2 && neighbour.cell.N > 50));
+    assert.strictEqual(MIN_CELL_INDEX, 0);
+    assert.deepStrictEqual(table.neighbours.map(neighbour => neighbour.row), [0, 1, 2]);
+    assert.ok(table.neighbours.every(neighbour => neighbour.dist <= 2.5 && neighbour.cell.N > MIN_CELL_INDEX));
+  });
+
+  it('allows a cell with one accepted observation to participate', () => {
+    const table = correctionTableFromCells([[correctionState(0.25, 0, 0.01, 1)]]);
+    assert.strictEqual(table.getCorrection(0, 0).correction.x, 0.25);
   });
 
   it('gives a lower-covariance cell more influence at equal distance', () => {
@@ -378,6 +385,39 @@ describe('CorrectionEstimator per-observation covariance', () => {
     assert.ok(Math.abs(estimator.covariance[0][1]) > 1e-6, 'expected a nonzero off-diagonal term');
     assert.ok(Math.abs(estimator.covariance[0][1] - estimator.covariance[1][0]) < 1e-9, 'covariance must stay symmetric');
   });
+
+  it('ages covariance immediately below, at, and above the 90-day cap', () => {
+    const now = 10_000_000;
+    const estimator = newEstimator();
+    estimator.setProcessNoiseRate(1);
+    estimator.filterState = new State({ mean: [[0], [0]], covariance: [[1, 0], [0, 1]], index: 1 });
+    estimator.lastAcceptedAt = now - (MAX_AGING_SECONDS - 1) * 1000;
+    const below = estimator.getAgedCovariance(now)[0][0];
+    estimator.lastAcceptedAt = now - MAX_AGING_SECONDS * 1000;
+    const at = estimator.getAgedCovariance(now)[0][0];
+    estimator.lastAcceptedAt = now - (MAX_AGING_SECONDS + 1) * 1000;
+    const above = estimator.getAgedCovariance(now)[0][0];
+
+    assert.ok(below < at);
+    assert.strictEqual(at, above);
+    assert.strictEqual(at, 1 + MAX_AGING_SECONDS / 10);
+    assert.strictEqual(estimator.filterState.covariance[0][0], 1, 'reads must not mutate stored covariance');
+  });
+
+  it('updates the timestamp only after an accepted observation', () => {
+    const estimator = newEstimator();
+    estimator.lastAcceptedAt = 1234;
+    const inputs = makeUpdateInputs();
+    estimator.filter.filter = ({ previousCorrected }) => previousCorrected;
+    assert.strictEqual(estimator.update(inputs.groundSpeed, inputs.current, inputs.boatSpeed, inputs.heading), true);
+    assert.notStrictEqual(estimator.lastAcceptedAt, 1234);
+
+    const rejected = newEstimator();
+    rejected.lastAcceptedAt = 5678;
+    const bad = makeUpdateInputs({ groundVector: [50, 0], boatVector: [0, 0] });
+    assert.strictEqual(rejected.update(bad.groundSpeed, bad.current, bad.boatSpeed, bad.heading), false);
+    assert.strictEqual(rejected.lastAcceptedAt, 5678);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -413,6 +453,7 @@ describe('correction table persistence', () => {
     assert.strictEqual(json.parameters.stability, 7);
     assert.strictEqual(json.parameters.observation.covariance, 'per-observation');
     assert.strictEqual(typeof json.parameters.observation.covariance, 'string');
+    assert.strictEqual(json.schemaVersion, 2);
   });
 
   it('still loads existing table files saved in the legacy (fixed-covariance) format', () => {

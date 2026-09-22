@@ -2,11 +2,12 @@ const { Table2D} = require('signalkutilities');
 const { KalmanFilter, State } = require('kalman-filter');
 
 const MAX_INTERPOLATION_DISTANCE = 2.5;
-const MIN_CELL_INDEX = 50;
+const MIN_CELL_INDEX = 0;
 const Q_RECALCULATION_INTERVAL = 600;
 const MIN_Q_PAIR_COUNT = 3;
 const DEFAULT_Q = 0.002;
 const COVARIANCE_FLOOR = 1e-9;
+const MAX_AGING_SECONDS = 90 * 24 * 60 * 60;
 const OBSERVATION_STATE_PROJECTION = [[1, 0], [0, 1]]; // observation matrix H
 const DYNAMIC_TRANSITION = [[1, 0], [0, 1]]; // state transition matrix F
 
@@ -160,6 +161,9 @@ class CorrectionTable extends Table2D{
     this.qEstimate = null;
     this.qSource = 'fallback';
     this.acceptedObservationsSinceQ = 0;
+    for (const rowCells of this.table) {
+      for (const cell of rowCells) cell.setProcessNoiseRate(stability);
+    }
   }
   
   update(speed, heel, groundSpeed, current, boatSpeed, heading, headingVariance) {
@@ -185,8 +189,8 @@ class CorrectionTable extends Table2D{
         for (const [rowOffset, colOffset] of [[1, 0], [0, 1]]) {
           const second = this.table[row + rowOffset]?.[col + colOffset];
           if (!second || second.N <= MIN_CELL_INDEX) continue;
-          const firstCovariance = _symmetricCovariance(first.covariance);
-          const secondCovariance = _symmetricCovariance(second.covariance);
+            const firstCovariance = _symmetricCovariance(first.covariance);
+            const secondCovariance = _symmetricCovariance(second.covariance);
           if (!firstCovariance || !secondCovariance) continue;
           const dx = first.x - second.x;
           const dy = first.y - second.y;
@@ -325,6 +329,18 @@ class CorrectionTable extends Table2D{
     };
   }
 
+  toJSON() {
+    return {
+      schemaVersion: 2,
+      id: this.id,
+      row: { min: this.min[0], max: this.max[0], step: this.step[0] },
+      col: { min: this.min[1], max: this.max[1], step: this.step[1] },
+      parameters: this.parameters,
+      table: this.table.map(row => row.map(cell => cell.toJSON())),
+      displayAttributes: this.displayAttributes
+    };
+  }
+
 }
 
 class CorrectionEstimator {
@@ -335,6 +351,8 @@ class CorrectionEstimator {
   static fromJSON(data, stability) {
     const filterModel = CorrectionEstimator.getFilterModel(stability);
     const estimator = new CorrectionEstimator(filterModel, data.state);
+    estimator.setProcessNoiseRate(stability);
+    estimator.lastAcceptedAt = Number.isFinite(data.lastAcceptedAt) ? data.lastAcceptedAt : null;
     return estimator;
   }
 
@@ -350,7 +368,7 @@ class CorrectionEstimator {
       },
       dynamic: {
         transition: DYNAMIC_TRANSITION, // state transition matrix F
-        covariance: [1/10**stability, 1/10**stability],// process noise covariance matrix Q
+        covariance: [0, 0], // aging applies process noise explicitly from elapsed time
       }
     };
   }
@@ -378,9 +396,39 @@ class CorrectionEstimator {
     this.filter = new KalmanFilter(filterModel);
     this.filterState = null;
     this.effectiveVariance = null;
+    this.processNoiseRate = Number.isFinite(filterModel?.dynamic?.covariance?.[0])
+      ? 1 / 10 ** 7
+      : 1 / 10 ** 7;
+    this.lastAcceptedAt = null;
     if (initialState != null) {
       this.filterState = new State(initialState);
     }
+  }
+
+  setProcessNoiseRate(stability = 7) {
+    this.processNoiseRate = 1 / 10 ** stability;
+    return this;
+  }
+
+  getAgedCovariance(now = Date.now()) {
+    if (this.filterState == null) return null;
+    const covariance = this.filterState.covariance.map(row => row.slice());
+    if (!Number.isFinite(this.lastAcceptedAt) || !Number.isFinite(now)) return covariance;
+    const elapsedSeconds = Math.max(0, (now - this.lastAcceptedAt) / 1000);
+    const effectiveDt = Math.min(elapsedSeconds, MAX_AGING_SECONDS);
+    const agedVariance = this.processNoiseRate * effectiveDt;
+    covariance[0][0] += agedVariance;
+    covariance[1][1] += agedVariance;
+    return covariance;
+  }
+
+  _agedState(now) {
+    if (this.filterState == null) return null;
+    return new State({
+      mean: this.filterState.mean.map(row => row.slice()),
+      covariance: this.getAgedCovariance(now),
+      index: this.filterState.index
+    });
   }
   
   update(groundSpeed, current, boatSpeed, heading, headingVariance) {
@@ -426,11 +474,13 @@ class CorrectionEstimator {
     // accepting it unconditionally, preventing a single outlier from locking a
     // cell at a bad value.
     const DIFFUSE_PRIOR_VAR = 1.0; // (m/s)² — rejects corrections > ~3 m/s from zero
-    const priorMean = this.filterState !== null
-      ? [this.filterState.mean[0][0], this.filterState.mean[1][0]]
+    const now = Date.now();
+    const agedState = this._agedState(now);
+    const priorMean = agedState !== null
+      ? [agedState.mean[0][0], agedState.mean[1][0]]
       : [0, 0];
-    const priorCov = this.filterState !== null
-      ? this.filterState.covariance
+    const priorCov = agedState !== null
+      ? agedState.covariance
       : [[DIFFUSE_PRIOR_VAR, 0], [0, DIFFUSE_PRIOR_VAR]];
     const inno = [observation[0] - priorMean[0], observation[1] - priorMean[1]];
     const S = [
@@ -449,13 +499,14 @@ class CorrectionEstimator {
                + inno[1] * (Sinv[1][0] * inno[0] + Sinv[1][1] * inno[1]);
       if (d2 > 9.21) return false;
     }
-    this.filterState = this.filter.filter({ previousCorrected: this.filterState, observation, observationCovariance });
+    this.filterState = this.filter.filter({ previousCorrected: agedState, observation, observationCovariance });
+    this.lastAcceptedAt = now;
     return true;
   }
 
 
   report() {
-    return { x: this.x, y: this.y, N: this.N };
+    return { x: this.x, y: this.y, N: this.N, lastAcceptedAt: this.lastAcceptedAt };
   }
 
   get N() {
@@ -474,15 +525,22 @@ class CorrectionEstimator {
   }
 
   get covariance() {
-    return this.filterState.covariance;
+    return this.getAgedCovariance();
   }
 
 
   toJSON() {
-    return this.N != 0 ? { state: this.filterState } : { state: null };
+    return this.N != 0
+      ? { state: this.filterState, lastAcceptedAt: this.lastAcceptedAt }
+      : { state: null, lastAcceptedAt: null };
   }
 
 }
 
 
-module.exports = { CorrectionTable, CorrectionEstimator };
+module.exports = {
+  CorrectionTable,
+  CorrectionEstimator,
+  MAX_AGING_SECONDS,
+  MIN_CELL_INDEX
+};
