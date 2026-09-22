@@ -48,6 +48,10 @@
 .cell-weight     { position: absolute; left: 0; bottom: 0; height: 4px; background-color: #0d6efd; }
 .cell--active    { outline: 1px solid #000; outline-offset: -1px; }
 
+/* ─── Correction table marker overlay (raw speed dot + corrected speed/leeway arrow) ─ */
+.Table2D-wrap    { position: relative; display: inline-block; }
+.Table2D-markers { position: absolute; top: 0; left: 0; pointer-events: none; overflow: visible; }
+
 /* ─── Stable table column widths inside cards ──────────────────────────────── */
 .card-body .table {
   table-layout: fixed;
@@ -121,4 +125,13 @@ tr.stale td { color: #aaa; font-style: italic; }
 .legend-swatch--weight   { position: relative; border: 0; }
 .legend-swatch--weight::after { content: ''; position: absolute; left: 0; right: 25%; bottom: 2px; height: 4px; background-color: #0d6efd; }
 .legend-swatch--active   { background: transparent; border-color: #000; border-radius: 0; }
+.legend-swatch--dot-red  { background: transparent; border: 0; border-radius: 0; position: relative; }
+.legend-swatch--dot-red::after,
+.legend-swatch--dot-blue::after {
+  content: ''; position: absolute; top: 2px; left: 8px;
+  width: 12px; height: 12px; border-radius: 50%; border: 1px solid #fff;
+}
+.legend-swatch--dot-red::after  { background-color: #dc3545; }
+.legend-swatch--dot-blue { background: transparent; border: 0; border-radius: 0; position: relative; }
+.legend-swatch--dot-blue::after { background-color: #0d6efd; }
 .legend-label-wide       { flex-shrink: 0; white-space: nowrap; font-weight: 600; }

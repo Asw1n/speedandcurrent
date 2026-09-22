@@ -687,7 +687,17 @@ function renderLiveSections() {
       heelSymbol:  angleC.symbol,
     };
     const tables = Object.values(state.tablesById);
-    tables.forEach(t => tableEl.appendChild(tableRenderer.render(t, tableOpts)));
+    const rawSpeed      = state.deltasById['boatSpeed']?.value;
+    const heel          = state.attitudesById['attitude']?.value?.roll;
+    const correctedSpeed = state.polarsById['correctedBoatSpeed']?.magnitude;
+    const marker = [rawSpeed, heel, correctedSpeed].every(Number.isFinite)
+      ? { rawSpeed, heel, correctedSpeed }
+      : null;
+    tables.forEach(t => {
+      const wrap = tableRenderer.render(t, tableOpts);
+      tableEl.appendChild(wrap);
+      tableRenderer.renderMarkers(wrap, t.row, t.col, marker);
+    });
   }
 }
 

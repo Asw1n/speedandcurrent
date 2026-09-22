@@ -9,6 +9,10 @@ const MPS_TO_KNOTS = 1.943844;
 
 const DEFAULT_SPEED_SYMBOL = 'kn';
 const DEFAULT_HEEL_SYMBOL  = '°';
+
+const MARKER_CORRECTED_COLOR = '#0d6efd';
+const MARKER_RAW_COLOR = '#dc3545';
+const MARKER_DOT_RADIUS = 8;
 function fmtSpeed(mps)  { return (mps * MPS_TO_KNOTS).toFixed(1); }
 function fmtHeel(rad)   { return (rad * RAD_TO_DEG).toFixed(0); }
 function fmtFactor(f)   { const p = (f - 1) * 100; return (p >= 0 ? '+' : '') + p.toFixed(1) + '%'; }
@@ -38,7 +42,75 @@ class TableRenderer {
       el.appendChild(this._dataRow(r, rIndex, col, table, maxDev, fmtSpeedFn));
       rIndex++;
     }
-    return el;
+
+    const wrap = document.createElement('div');
+    wrap.classList.add('Table2D-wrap');
+    wrap.appendChild(el);
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.classList.add('Table2D-markers');
+    wrap.appendChild(svg);
+    return wrap;
+  }
+
+  // Overlay a dot for the uncorrected (raw) speed and a dot for the corrected
+  // speed, both positioned at the raw heel column.
+  // wrap: the element returned by render(). row/col: the table's axis config
+  // ({min,max,step}). marker: { rawSpeed, heel, correctedSpeed } in raw (SI)
+  // units, or null/undefined to clear the overlay.
+  renderMarkers(wrap, row, col, marker) {
+    const svg = wrap.querySelector('.Table2D-markers');
+    const table = wrap.querySelector('.Table2D');
+    if (!svg || !table) return;
+    svg.innerHTML = '';
+    if (!marker) return;
+    const { rawSpeed, heel, correctedSpeed } = marker;
+    if (![rawSpeed, heel, correctedSpeed].every(Number.isFinite)) return;
+
+    const wrapRect = wrap.getBoundingClientRect();
+    svg.setAttribute('width', wrapRect.width);
+    svg.setAttribute('height', wrapRect.height);
+
+    const rowHeaders = [...table.querySelectorAll('th.TableRowHeader:not(.TableCorner)')];
+    const colHeaders = [...table.querySelectorAll('th.TablecolumnHeader')];
+    if (!rowHeaders.length || !colHeaders.length) return;
+
+    const centerY = rowHeaders.map(th => {
+      const r = th.getBoundingClientRect();
+      return (r.top + r.bottom) / 2 - wrapRect.top;
+    });
+    const centerX = colHeaders.map(th => {
+      const r = th.getBoundingClientRect();
+      return (r.left + r.right) / 2 - wrapRect.left;
+    });
+
+    const x       = this._lerpAxis(centerX, (heel - col.min) / col.step);
+    const yRaw    = this._lerpAxis(centerY, (rawSpeed - row.min) / row.step);
+    const yCorr   = this._lerpAxis(centerY, (correctedSpeed - row.min) / row.step);
+
+    svg.appendChild(this._markerDot(x, yRaw, MARKER_RAW_COLOR));
+    svg.appendChild(this._markerDot(x, yCorr, MARKER_CORRECTED_COLOR));
+  }
+
+  // Interpolate a continuous axis index (may be fractional, out of range) against
+  // an array of known pixel centers for each axis bin.
+  _lerpAxis(centers, frac) {
+    const n = centers.length;
+    const f = Math.max(0, Math.min(n - 1, frac));
+    const i0 = Math.floor(f);
+    const i1 = Math.min(i0 + 1, n - 1);
+    const t = f - i0;
+    return centers[i0] + (centers[i1] - centers[i0]) * t;
+  }
+
+  _markerDot(x, y, color) {
+    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    circle.setAttribute('cx', x);
+    circle.setAttribute('cy', y);
+    circle.setAttribute('r', MARKER_DOT_RADIUS);
+    circle.setAttribute('fill', color);
+    circle.setAttribute('stroke', '#fff');
+    circle.setAttribute('stroke-width', 1);
+    return circle;
   }
 
   _headerRow(col, cornerText, fmtHeelFn) {

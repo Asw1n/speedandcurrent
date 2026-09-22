@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Correction-table files now use version 2 with per-cell update timestamps, capped time-based aging, and silent migration of existing version-1 files.
 - The webapp now polls at the plugin's actual sample rate instead of a fixed 1s interval, reported via a new `pollIntervalMs` field on `/api/report`.
 - Correction estimates now fuse mature nearby table cells using their full covariance and normalized distance, with an automatically estimated spatial variance, a two-cell search radius, and fusion-weight diagnostics in the webapp.
+- The correction table now overlays the current uncorrected (raw) and corrected speed/heel as red and blue dots positioned directly on the grid, with a matching legend entry.
 
 ### Changed
 - Correction-table process noise is now configured as a user-facing correction drift rate in knots/month, with a conservative default of 0.3 and an SI conversion internally. Legacy stability settings migrate silently.
