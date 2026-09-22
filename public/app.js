@@ -305,7 +305,7 @@ const paramMeta = {
   suspendLearningOnNavigationState: { label: 'Suspend on navigation.state', type: 'boolean', description: 'When enabled, navigation.state can override the vessel\u2019s own SOG-based moving/not-moving state: anchored, moored, or motoring are treated as not moving (learning suspended, leeway zeroed). It can never force "moving" when SOG says otherwise.' },
   assumeCurrent:         { label: 'Assume current during update',         type: 'boolean', description: 'Experimental, works best when currents are relatively stable.' },
   sogFallback:           { label: 'Groundspeed fallback',                 type: 'boolean', description: 'Output Groundspeed as Boatspeed when the paddlewheel sensor is malfunctioning or stalled.' },
-  stability:             { label: 'Stability (1–20)',                     type: 'number', min: 1, max: 20, step: 1, default: 7, description: 'How quickly the correction table adapts to new observations. Higher values mean slower, more stable changes.' },
+  correctionDriftRate:   { label: 'Correction drift',                    type: 'number', unit: 'knots/month', min: 0, max: 3, step: 0.1, default: 0.3, description: 'Typical one-sigma drift allowed in the learned correction over one 30-day month.' },
   showStatistics:        { label: 'Show statistics (σ)',                  type: 'boolean', description: 'Display standard deviation alongside smoothed values for debugging.' },
   smootherTimeSpan: {
     label: 'Window size', type: 'number', unit: 's',
@@ -316,7 +316,7 @@ const paramMeta = {
 
 // Settings groups for each UI section
 const ESTIMATION_SETTING_KEYS = ['sogFallback'];
-const LEARNING_SETTING_KEYS   = ['stability', 'suspendLearningOnNavigationState', 'assumeCurrent', 'showStatistics'];
+const LEARNING_SETTING_KEYS   = ['correctionDriftRate', 'suspendLearningOnNavigationState', 'assumeCurrent', 'showStatistics'];
 const SMOOTHER_SETTING_KEYS   = ['smootherTimeSpan'];
 
 // Build one settings control for a key.

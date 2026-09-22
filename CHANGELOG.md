@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Correction estimates now fuse mature nearby table cells using their full covariance and normalized distance, with an automatically estimated spatial variance, a two-cell search radius, and fusion-weight diagnostics in the webapp.
 
 ### Changed
+- Correction-table process noise is now configured as a user-facing correction drift rate in knots/month, with a conservative default of 0.3 and an SI conversion internally. Legacy stability settings migrate silently.
 - Correction interpolation now includes mature cells within 2.5 normalized grid-cell units.
 - Correction learning now always uses a moving-average window of at least 5 seconds, with a one-second gap between observation windows. Older smoother selections migrate silently.
 - Cells become eligible after one accepted observation; the explicit maturity gate remains in place at zero for future tuning.

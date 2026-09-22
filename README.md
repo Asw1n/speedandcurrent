@@ -156,7 +156,7 @@ The panel also shows whether learning is currently active, suspended, or skipped
 |---------|---------|-------------|
 | **Update Correction Table** | On | Master toggle. Allow the table to update from current observations. |
 | **Suspend on navigation.state = motoring** | Off | When enabled, suspend learning when a known `navigation.state` reports `anchored`, `moored`, or `motoring`. When disabled, `navigation.state` does not override the SOG-based moving check. |
-| **Stability (1–20)** | 7 | How quickly the correction table adapts to new observations. Higher = slower, more conservative. Lower = faster but noisier. See the technical section for detail. |
+| **Correction drift** | 0.3 knots/month | Typical one-sigma drift allowed in the learned correction over one 30-day month. Higher values adapt faster but are less stable. Range: 0.0–3.0 knots/month. |
 | **Assume Current (experimental)** | Off | Include the running current estimate in the table update calculation. Only enable once the current estimate has had time to stabilise and tidal conditions are relatively steady. |
 | **Show Statistics (σ)** | Off | Display standard deviation alongside each smoothed value. Useful for spotting noisy sensors. |
 
@@ -303,18 +303,18 @@ x_new = x_old + K · (observation − x_old)
 
 where P is the cell's current covariance and R_obs is the observation covariance derived from the measurement uncertainty of all contributing signals (SOG variance + current variance + STW variance, rotated appropriately). It also includes heading uncertainty in radians squared. For $u = R(-heading)(groundSpeed - current)$, the heading contribution is $J \sigma_h^2 J^T$, where $J = [u_y, -u_x]^T$. This is applied once to the combined ground-speed-minus-current vector because both vectors share the same heading error. **Noisy observations produce a smaller gain and move the cell estimate less.**
 
-### Time-scaled aging and stability
+### Time-scaled aging and correction drift
 
 Each cell has a small **process-noise rate** that allows it to drift slowly over time, reflecting that a paddle wheel's error can change with fouling, recalibration, or crew weight distribution. For an elapsed interval `dt`, the process covariance added to each diagonal is:
 
 ```text
 effectiveDt = min(dt, 90 days)
-Q(dt) = 10^(−stability) × effectiveDt × I
+Q(dt) = Q_rate × effectiveDt × I
 ```
 
-With stability = 7 (default), the process-noise rate is 10⁻⁷ per second. Offline time counts toward aging, but aging stops after the internal 90-day cap. Aged covariance is calculated when gating, filtering, interpolation, spatial-q estimation, and reporting; stored covariance is not mutated by reads. Rejected observations do not advance a cell timestamp; accepted observations store the posterior covariance and current UTC epoch-millisecond timestamp.
+The user-facing `Correction drift` value is expressed in knots per month, using a 30-day month. Internally, it is converted to the SI process-noise rate in $(m/s)^2/s$. The default 0.3 knots/month corresponds to approximately $9.2 × 10^{-9}\ (m/s)^2/s$. Offline time counts toward aging, but aging stops after the internal 90-day cap. Aged covariance is calculated when gating, filtering, interpolation, spatial-q estimation, and reporting; stored covariance is not mutated by reads. Rejected observations do not advance timestamps; accepted observations store the posterior covariance and current UTC epoch-millisecond timestamp.
 
-In practical terms: high stability = trust the accumulated history; low stability = trust recent observations more.
+In practical terms: a lower correction-drift rate trusts accumulated history more; a higher rate allows the table to adapt more quickly to long-term sensor changes.
 
 ### How current is estimated
 

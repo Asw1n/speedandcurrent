@@ -8,6 +8,10 @@ const MIN_Q_PAIR_COUNT = 3;
 const DEFAULT_Q = 0.002;
 const COVARIANCE_FLOOR = 1e-9;
 const MAX_AGING_SECONDS = 90 * 24 * 60 * 60;
+const SECONDS_PER_MONTH = 30 * 24 * 60 * 60;
+const KNOT_TO_MPS = 0.5144444444444444;
+const DEFAULT_CORRECTION_DRIFT_RATE = 0.3;
+const DEFAULT_PROCESS_NOISE_RATE = (DEFAULT_CORRECTION_DRIFT_RATE * KNOT_TO_MPS) ** 2 / SECONDS_PER_MONTH;
 const OBSERVATION_STATE_PROJECTION = [[1, 0], [0, 1]]; // observation matrix H
 const DYNAMIC_TRANSITION = [[1, 0], [0, 1]]; // state transition matrix F
 
@@ -74,9 +78,9 @@ class CorrectionTable extends Table2D{
 
 
 
-  static fromJSON(data, stability) {
-    const table = new CorrectionTable(data.id, data.row, data.col, stability);
-    table.table = data.table.map(row => row.map(cellData => CorrectionEstimator.fromJSON(cellData, stability)));
+  static fromJSON(data, processNoiseRate = DEFAULT_PROCESS_NOISE_RATE) {
+    const table = new CorrectionTable(data.id, data.row, data.col, processNoiseRate);
+    table.table = data.table.map(row => row.map(cellData => CorrectionEstimator.fromJSON(cellData, processNoiseRate)));
     table.calculateQ();
     return table;
   }
@@ -90,12 +94,12 @@ class CorrectionTable extends Table2D{
    * @param {CorrectionTable} oldTable - Source table to sample from
    * @param {{min:number,max:number,step:number}} newRow - New speed axis definition (SI units)
    * @param {{min:number,max:number,step:number}} newCol - New heel axis definition (SI units)
-   * @param {number} [stability=5] - Stability passed to new table filter model
+  * @param {number} [processNoiseRate=DEFAULT_PROCESS_NOISE_RATE] - SI process-noise rate
    * @param {number} [varianceFloor=1e-4] - Floor applied to cov[0][0] and cov[1][1]
    * @returns {CorrectionTable}
    */
-  static resample(oldTable, newRow, newCol, stability = 5, varianceFloor = 1e-4) {
-    const newTable = new CorrectionTable(oldTable.id, newRow, newCol, stability);
+  static resample(oldTable, newRow, newCol, processNoiseRate = DEFAULT_PROCESS_NOISE_RATE, varianceFloor = 1e-4) {
+    const newTable = new CorrectionTable(oldTable.id, newRow, newCol, processNoiseRate);
 
     const nRows = Math.round((newRow.max - newRow.min) / newRow.step) + 1;
     const nCols = Math.round((newCol.max - newCol.min) / newCol.step) + 1;
@@ -142,17 +146,17 @@ class CorrectionTable extends Table2D{
   /**
    * Convenience to resample from serialized JSON table data
    */
-  static resampleFromJSON(data, newRow, newCol, stability = 5, varianceFloor = 1e-4) {
-    const oldTable = CorrectionTable.fromJSON(data, stability);
-    return CorrectionTable.resample(oldTable, newRow, newCol, stability, varianceFloor);
+  static resampleFromJSON(data, newRow, newCol, processNoiseRate = DEFAULT_PROCESS_NOISE_RATE, varianceFloor = 1e-4) {
+    const oldTable = CorrectionTable.fromJSON(data, processNoiseRate);
+    return CorrectionTable.resample(oldTable, newRow, newCol, processNoiseRate, varianceFloor);
   }
 
-  constructor(id, row, col, stability=5) {
-    super(id, row, col, CorrectionEstimator, CorrectionEstimator.getFilterModel(stability));
+  constructor(id, row, col, processNoiseRate = DEFAULT_PROCESS_NOISE_RATE) {
+    super(id, row, col, CorrectionEstimator, CorrectionEstimator.getFilterModel(processNoiseRate));
     // Table2D persists the constructor param verbatim as `this.parameters`. The live filter model
     // carries a runtime callback for observation.covariance, which JSON.stringify would silently
     // drop. Replace it with a serializable descriptor so persisted files stay honest.
-    this.parameters = CorrectionEstimator.getModelDescriptor(stability);
+    this.parameters = CorrectionEstimator.getModelDescriptor(processNoiseRate);
     this.lastUpdatedCell = null;
     this.lastUpdateResult = null;
     this.neighbours = [];
@@ -162,7 +166,14 @@ class CorrectionTable extends Table2D{
     this.qSource = 'fallback';
     this.acceptedObservationsSinceQ = 0;
     for (const rowCells of this.table) {
-      for (const cell of rowCells) cell.setProcessNoiseRate(stability);
+      for (const cell of rowCells) cell.setProcessNoiseRate(processNoiseRate);
+    }
+  }
+
+  setProcessNoiseRate(processNoiseRate) {
+    this.parameters = CorrectionEstimator.getModelDescriptor(processNoiseRate);
+    for (const rowCells of this.table) {
+      for (const cell of rowCells) cell.setProcessNoiseRate(processNoiseRate);
     }
   }
   
@@ -348,15 +359,15 @@ class CorrectionEstimator {
    * Represents a Kalman correction at a cell in a correction table
    */
 
-  static fromJSON(data, stability) {
-    const filterModel = CorrectionEstimator.getFilterModel(stability);
+  static fromJSON(data, processNoiseRate = DEFAULT_PROCESS_NOISE_RATE) {
+    const filterModel = CorrectionEstimator.getFilterModel(processNoiseRate);
     const estimator = new CorrectionEstimator(filterModel, data.state);
-    estimator.setProcessNoiseRate(stability);
+    estimator.setProcessNoiseRate(processNoiseRate);
     estimator.lastAcceptedAt = Number.isFinite(data.lastAcceptedAt) ? data.lastAcceptedAt : null;
     return estimator;
   }
 
-  static getFilterModel(stability = 5) {
+  static getFilterModel(processNoiseRate = DEFAULT_PROCESS_NOISE_RATE) {
     return {
       observation: {
         stateProjection: OBSERVATION_STATE_PROJECTION,
@@ -377,9 +388,8 @@ class CorrectionEstimator {
    * Serializable descriptor of the filter model, stored in table.parameters for persistence.
    * Unlike getFilterModel(), this never contains functions.
    */
-  static getModelDescriptor(stability = 5) {
+  static getModelDescriptor(processNoiseRate = DEFAULT_PROCESS_NOISE_RATE) {
     return {
-      stability,
       observation: {
         stateProjection: OBSERVATION_STATE_PROJECTION,
         covariance: 'per-observation', // actual R supplied at runtime by CorrectionEstimator.update()
@@ -387,7 +397,7 @@ class CorrectionEstimator {
       },
       dynamic: {
         transition: DYNAMIC_TRANSITION,
-        covariance: [1/10**stability, 1/10**stability]
+        covariance: [processNoiseRate, processNoiseRate]
       }
     };
   }
@@ -397,16 +407,18 @@ class CorrectionEstimator {
     this.filterState = null;
     this.effectiveVariance = null;
     this.processNoiseRate = Number.isFinite(filterModel?.dynamic?.covariance?.[0])
-      ? 1 / 10 ** 7
-      : 1 / 10 ** 7;
+      ? filterModel.dynamic.covariance[0]
+      : DEFAULT_PROCESS_NOISE_RATE;
     this.lastAcceptedAt = null;
     if (initialState != null) {
       this.filterState = new State(initialState);
     }
   }
 
-  setProcessNoiseRate(stability = 7) {
-    this.processNoiseRate = 1 / 10 ** stability;
+  setProcessNoiseRate(processNoiseRate = DEFAULT_PROCESS_NOISE_RATE) {
+    this.processNoiseRate = Number.isFinite(processNoiseRate) && processNoiseRate >= 0
+      ? processNoiseRate
+      : DEFAULT_PROCESS_NOISE_RATE;
     return this;
   }
 
@@ -542,5 +554,9 @@ module.exports = {
   CorrectionTable,
   CorrectionEstimator,
   MAX_AGING_SECONDS,
-  MIN_CELL_INDEX
+  MIN_CELL_INDEX,
+  SECONDS_PER_MONTH,
+  KNOT_TO_MPS,
+  DEFAULT_CORRECTION_DRIFT_RATE,
+  DEFAULT_PROCESS_NOISE_RATE
 };

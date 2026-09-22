@@ -17,7 +17,13 @@ const {
   Table2D
 } = require('signalkutilities');
 
-const { CorrectionTable } = require('./correctionTable.js');
+const {
+  CorrectionTable,
+  DEFAULT_CORRECTION_DRIFT_RATE,
+  DEFAULT_PROCESS_NOISE_RATE,
+  SECONDS_PER_MONTH,
+  KNOT_TO_MPS
+} = require('./correctionTable.js');
 
 const LONG_STABILIZING_MS = 60 * 1000;
 const MIN_SMOOTHING_WINDOW_SECONDS = 5;
@@ -26,6 +32,19 @@ const LEARNING_GAP_SECONDS = 1;
 // override (see isVesselMoving) when options.suspendLearningOnNavigationState is enabled.
 const NOT_MOVING_NAVIGATION_STATES = new Set(['anchored', 'moored', 'motoring']);
 const OBSOLETE_SMOOTHER_KEYS = new Set(['smootherClass', 'smootherTau', 'smootherSteadyState']);
+const MAX_CORRECTION_DRIFT_RATE = 3;
+
+function correctionDriftRateToProcessNoiseRate(driftRate) {
+  const rate = Number.isFinite(Number(driftRate))
+    ? Math.min(MAX_CORRECTION_DRIFT_RATE, Math.max(0, Number(driftRate)))
+    : DEFAULT_CORRECTION_DRIFT_RATE;
+  return (rate * KNOT_TO_MPS) ** 2 / SECONDS_PER_MONTH;
+}
+
+function legacyStabilityToCorrectionDriftRate(stability) {
+  if (!Number.isFinite(Number(stability))) return DEFAULT_CORRECTION_DRIFT_RATE;
+  return Math.sqrt((10 ** -Number(stability)) * SECONDS_PER_MONTH) / KNOT_TO_MPS;
+}
 
 function normalizeNavigationState(value) {
   return typeof value === 'string' ? value.trim().toLowerCase() : null;
@@ -202,7 +221,7 @@ module.exports = function (app) {
     sogFallback: true,
     estimateBoatSpeed: false,
     updateCorrectionTable: true,
-    stability: 7,
+    correctionDriftRate: DEFAULT_CORRECTION_DRIFT_RATE,
     assumeCurrent: false,
     suspendLearningOnNavigationState: false,
     tableName: 'correctionTable',
@@ -219,6 +238,10 @@ module.exports = function (app) {
     // Strip embedded table — stored separately on disk
     const { correctionTable: _drop, ...rest } = raw;
     options = { ...defaultOptions, ...rest };
+    if (!('correctionDriftRate' in rest) && Number.isFinite(Number(rest.stability))) {
+      options.correctionDriftRate = legacyStabilityToCorrectionDriftRate(rest.stability);
+    }
+    delete options.stability;
   }
 
   function saveOptions() {
@@ -239,7 +262,7 @@ module.exports = function (app) {
   function migrateConfig() {
     const obsoleteKeys = [
       'headingSource', 'boatSpeedSource', 'SOGSource', 'attitudeSource',
-      'preventDuplication', 'minSogForLearning', 'smootherClass',
+      'preventDuplication', 'minSogForLearning', 'stability', 'smootherClass',
       'smootherTau', 'smootherSteadyState'
     ];
     const hadObsolete = obsoleteKeys.some(k => k in options);
@@ -247,8 +270,8 @@ module.exports = function (app) {
     const previousWindow = options.smootherTimeSpan;
     options.smootherTimeSpan = getSmoothingWindowSeconds(options);
     const windowChanged = previousWindow !== options.smootherTimeSpan;
-    if (hadObsolete || windowChanged || (options.configVersion || 0) < 3) {
-      options.configVersion = 3;
+    if (hadObsolete || windowChanged || (options.configVersion || 0) < 4) {
+      options.configVersion = 4;
       saveOptions();
       app.debug('Config migrated to v3: standardized correction-table learning smoothing');
     }
@@ -475,7 +498,15 @@ module.exports = function (app) {
           return res.status(400).json({ error: `Key '${k}' is managed via the table manager` });
         }
       }
-      const accepted = Object.fromEntries(Object.entries(body).filter(([key]) => !OBSOLETE_SMOOTHER_KEYS.has(key)));
+      const accepted = Object.fromEntries(Object.entries(body).filter(([key]) => key !== 'stability' && !OBSOLETE_SMOOTHER_KEYS.has(key)));
+      if ('correctionDriftRate' in accepted) {
+        const driftRate = Number(accepted.correctionDriftRate);
+        if (Number.isFinite(driftRate)) {
+          accepted.correctionDriftRate = Math.min(MAX_CORRECTION_DRIFT_RATE, Math.max(0, driftRate));
+        } else {
+          delete accepted.correctionDriftRate;
+        }
+      }
       if ('smootherTimeSpan' in accepted) {
         accepted.smootherTimeSpan = getSmoothingWindowSeconds(accepted);
       }
@@ -520,7 +551,7 @@ module.exports = function (app) {
       }
       const row = { min: 0, max: body.maxSpeed, step: body.speedStep };
       const col = { min: -body.maxHeel, max: body.maxHeel, step: body.heelStep };
-      const newTable = new CorrectionTable(name, row, col, options.stability || 7);
+      const newTable = new CorrectionTable(name, row, col, correctionDriftRateToProcessNoiseRate(options.correctionDriftRate));
       newTable.setDisplayAttributes({ label: name }); // Table2D API unchanged
       saveTable(newTable, path.join(app.getDataDirPath(), name + '.json'));
       if (isRunning) swapTable(newTable);
@@ -544,7 +575,7 @@ module.exports = function (app) {
         return res.status(422).json({ error: message });
       }
       try {
-        const loadedTable = CorrectionTable.fromJSON(fileData, options.stability || 7);
+        const loadedTable = CorrectionTable.fromJSON(fileData, correctionDriftRateToProcessNoiseRate(options.correctionDriftRate));
         loadedTable.setDisplayAttributes({ label: name }); // Table2D API unchanged
         if (isRunning) swapTable(loadedTable);
         saveTableName(name);
@@ -566,7 +597,7 @@ module.exports = function (app) {
         return res.status(400).json({ error: 'Name must be alphanumeric (underscores and hyphens allowed)' });
       const data = table.toJSON();
       data.id = newName;
-      const copiedTable = CorrectionTable.fromJSON(data, options.stability || 7);
+      const copiedTable = CorrectionTable.fromJSON(data, correctionDriftRateToProcessNoiseRate(options.correctionDriftRate));
       copiedTable.setDisplayAttributes({ label: newName }); // Table2D API unchanged
       saveTable(copiedTable, path.join(app.getDataDirPath(), newName + '.json'));
       swapTable(copiedTable);
@@ -585,7 +616,7 @@ module.exports = function (app) {
       }
       const newRow = { min: 0, max: body.maxSpeed, step: body.speedStep };
       const newCol = { min: -body.maxHeel, max: body.maxHeel, step: body.heelStep };
-      const resized = CorrectionTable.resampleFromJSON(table.toJSON(), newRow, newCol, options.stability || 7, 1e-4);
+      const resized = CorrectionTable.resampleFromJSON(table.toJSON(), newRow, newCol, correctionDriftRateToProcessNoiseRate(options.correctionDriftRate), 1e-4);
       resized.setDisplayAttributes({ label: resized.id }); // Table2D API unchanged
       saveTable(resized, path.join(app.getDataDirPath(), resized.id + '.json'));
       swapTable(resized);
@@ -1046,12 +1077,12 @@ module.exports = function (app) {
    * If the file exists it is deserialized; otherwise a new table is created
    * with default dimensions and saved to disk.
    *
-   * @param {Object} options - Plugin options (stability, tableName, and dimension defaults).
+  * @param {Object} options - Plugin options (correctionDriftRate, tableName, and dimension defaults).
    * @param {string} filePath - Absolute path of the JSON file to read.
    * @returns {CorrectionTable} The loaded or newly created CorrectionTable instance.
    */
   function loadTable(options, filePath) {
-    const stability = (options.stability !== undefined) ? options.stability : 6;
+    const processNoiseRate = correctionDriftRateToProcessNoiseRate(options.correctionDriftRate);
     let fileData = Table2D.readFromFile(filePath);
     if (fileData) {
       try {
@@ -1059,7 +1090,7 @@ module.exports = function (app) {
           filePath,
           debug: message => app.debug(message)
         });
-        const table = CorrectionTable.fromJSON(migration.data, stability);
+        const table = CorrectionTable.fromJSON(migration.data, processNoiseRate);
         table.setDisplayAttributes({ label: table.id }); // Table2D API unchanged
         if (migration.migrated) saveMigratedTable(table, filePath);
         app.debug("Correction table loaded: " + (fileData.id || filePath));
@@ -1073,15 +1104,15 @@ module.exports = function (app) {
       return recoverTable(`could not read ${filePath}`);
     }
 
-    const table = createDefaultTable(options.tableName || 'correctionTable', stability);
+    const table = createDefaultTable(options.tableName || 'correctionTable', processNoiseRate);
     app.debug("Correction table created: " + table.id);
     return table;
   }
 
-  function createDefaultTable(name, stability) {
+  function createDefaultTable(name, processNoiseRate = DEFAULT_PROCESS_NOISE_RATE) {
     const row = { min: 0, max: SI.fromKnots(DEFAULT_DIMS.maxSpeed), step: SI.fromKnots(DEFAULT_DIMS.speedStep) };
     const col = { min: -SI.fromDegrees(DEFAULT_DIMS.maxHeel), max: SI.fromDegrees(DEFAULT_DIMS.maxHeel), step: SI.fromDegrees(DEFAULT_DIMS.heelStep) };
-    const table = new CorrectionTable(name, row, col, stability);
+    const table = new CorrectionTable(name, row, col, processNoiseRate);
     table.setDisplayAttributes({ label: name }); // Table2D API unchanged
     return table;
   }
@@ -1089,7 +1120,7 @@ module.exports = function (app) {
   function recoverTable(reason) {
     const recoveryName = `correctionTable-${new Date().toISOString().slice(0, 10)}`;
     const recoveryPath = path.join(app.getDataDirPath(), recoveryName + '.json');
-    const table = createDefaultTable(recoveryName, (options.stability !== undefined) ? options.stability : 6);
+    const table = createDefaultTable(recoveryName, correctionDriftRateToProcessNoiseRate(options.correctionDriftRate));
     const message = `Correction table recovery: ${reason}; loaded empty table ${recoveryName}`;
     app.error(message);
     app.debug(message);
@@ -1163,7 +1194,7 @@ module.exports = function (app) {
           const filePath = path.join(app.getDataDirPath(), table.id + '.json');
           const fileData = Table2D.readFromFile(filePath);
           if (fileData) {
-            const reloaded = CorrectionTable.fromJSON(fileData, options.stability || 7);
+            const reloaded = CorrectionTable.fromJSON(fileData, correctionDriftRateToProcessNoiseRate(options.correctionDriftRate));
             reloaded.setDisplayAttributes({ label: reloaded.id });
             if (!isTableEmpty(reloaded)) {
               swapTable(reloaded);
@@ -1173,7 +1204,7 @@ module.exports = function (app) {
         }
       }
       // All other keys (sogFallback, estimateBoatSpeed, assumeCurrent,
-      // stability, and smootherTimeSpan) are read
+      // correctionDriftRate, and smootherTimeSpan) are read
       // directly from options.* so no extra action needed.
       if (key === 'estimateBoatSpeed' && !value && correctedBoatSpeed) {
         Polar.clear(app, plugin.id, [correctedBoatSpeed]);
@@ -1181,6 +1212,10 @@ module.exports = function (app) {
       }
 
       delete changedOptions[key];
+    }
+
+    if (changedKeys.includes('correctionDriftRate') && table) {
+      table.setProcessNoiseRate(correctionDriftRateToProcessNoiseRate(options.correctionDriftRate));
     }
 
     // Hot-apply the learning window to all user-tuned smoothers.
@@ -1203,6 +1238,8 @@ module.exports._test = {
   getShortStabilizingMs,
   getSmoothingWindowSeconds,
   getLearningIntervalMs,
+  correctionDriftRateToProcessNoiseRate,
+  legacyStabilityToCorrectionDriftRate,
   migrateCorrectionTableData,
   isVesselMoving,
   evaluateLearningMode,

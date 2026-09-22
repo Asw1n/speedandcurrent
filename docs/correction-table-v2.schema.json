@@ -31,11 +31,21 @@
       }
     },
     "parameters": {
+      "oneOf": [
+        { "$ref": "#/$defs/currentParameters" },
+        { "$ref": "#/$defs/legacyParameters" }
+      ]
+    },
+    "currentParameters": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["stability", "observation", "dynamic"],
+      "required": ["processNoiseRate", "observation", "dynamic"],
       "properties": {
-        "stability": { "type": "number" },
+        "processNoiseRate": {
+          "type": "number",
+          "minimum": 0,
+          "description": "SI process-noise rate in (m/s)^2 per second. The UI expresses this as correction drift in knots per 30-day month."
+        },
         "observation": {
           "type": "object",
           "additionalProperties": false,
@@ -55,6 +65,34 @@
             "covariance": { "$ref": "#/$defs/vector2" }
           }
         }
+      }
+    },
+    "legacyParameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stability", "observation", "dynamic"],
+      "properties": {
+        "stability": { "type": "number" },
+        "observation": { "$ref": "#/$defs/legacyObservation" },
+        "dynamic": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["transition", "covariance"],
+          "properties": {
+            "transition": { "$ref": "#/$defs/matrix2" },
+            "covariance": { "$ref": "#/$defs/vector2" }
+          }
+        }
+      }
+    },
+    "legacyObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stateProjection", "covariance", "dimension"],
+      "properties": {
+        "stateProjection": { "$ref": "#/$defs/matrix2" },
+        "covariance": { "$ref": "#/$defs/matrix2" },
+        "dimension": { "const": 2 }
       }
     },
     "cell": {

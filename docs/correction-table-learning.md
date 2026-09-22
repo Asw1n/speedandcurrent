@@ -24,9 +24,10 @@ The 90-day value is an internal constant. Offline time counts toward `effectiveD
 ## Eligibility and spatial q
 
 `MIN_CELL_INDEX` remains an explicit maturity gate and is currently zero. A cell is eligible only when `cell.N > MIN_CELL_INDEX`, so one accepted observation is sufficient. The same condition is used by interpolation and spatial-q pair selection. The index remains persisted and exposed in diagnostics.
+The user-facing process-noise setting is **Correction drift**, expressed in knots per month. A month is defined as 30 days. Internally the value is converted to the SI `processNoiseRate` in `(m/s)^2` per second. The default is 0.3 knots/month; the UI range is 0.0 to 3.0 in 0.1 increments.
 
 ## File compatibility
 
-Schema version 1 is the historical format and is preserved in `correction-table-v1.schema.json`; the existing `correction-table.schema.json` filename remains a compatibility alias. Schema version 2 adds `schemaVersion: 2`, per-cell `lastAcceptedAt` timestamps, and the serializable current model descriptor.
+Schema version 1 is the historical format and is preserved in `correction-table-v1.schema.json`; the existing `correction-table.schema.json` filename remains a compatibility alias. Schema version 2 adds `schemaVersion: 2`, per-cell `lastAcceptedAt` timestamps, and the serializable current model descriptor, including the SI `processNoiseRate`. The former `stability` descriptor is accepted only for compatibility with older files and is not written by new tables.
 
 Legacy files without a discriminator and files marked version 1 are migrated on load. Every learned legacy cell receives the file's `mtimeMs`, because individual cell ages are unavailable. This is a conservative estimate. Empty cells receive `null`. If filesystem metadata is unavailable, load time is used and the fallback is recorded through debug logging. The original file is replaced only after successful deserialization and validation, using an atomic temporary-file rename. Loading an existing version-2 file never rewrites its timestamps.

@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { State } = require('kalman-filter');
-const { CorrectionTable, CorrectionEstimator, MAX_AGING_SECONDS, MIN_CELL_INDEX } = require('../correctionTable.js');
+const { CorrectionTable, CorrectionEstimator, MAX_AGING_SECONDS, MIN_CELL_INDEX, DEFAULT_PROCESS_NOISE_RATE } = require('../correctionTable.js');
 
 // ---------------------------------------------------------------------------
 // App shim helpers
@@ -389,7 +389,7 @@ describe('CorrectionEstimator per-observation covariance', () => {
   it('ages covariance immediately below, at, and above the 90-day cap', () => {
     const now = 10_000_000;
     const estimator = newEstimator();
-    estimator.setProcessNoiseRate(1);
+    estimator.setProcessNoiseRate(1 / 10);
     estimator.filterState = new State({ mean: [[0], [0]], covariance: [[1, 0], [0, 1]], index: 1 });
     estimator.lastAcceptedAt = now - (MAX_AGING_SECONDS - 1) * 1000;
     const below = estimator.getAgedCovariance(now)[0][0];
@@ -450,7 +450,8 @@ describe('correction table persistence', () => {
     const table = new CorrectionTable('test', { min: 0, max: 0, step: 1 }, { min: 0, max: 0, step: 1 }, 7);
     const json = JSON.parse(JSON.stringify(table.toJSON()));
 
-    assert.strictEqual(json.parameters.stability, 7);
+    assert.ok(Number.isFinite(json.parameters.dynamic.covariance[0]));
+    assert.ok(!('stability' in json.parameters));
     assert.strictEqual(json.parameters.observation.covariance, 'per-observation');
     assert.strictEqual(typeof json.parameters.observation.covariance, 'string');
     assert.strictEqual(json.schemaVersion, 2);
@@ -524,7 +525,7 @@ describe('correction table persistence', () => {
     assert.ok(!('schemaVersion' in v1.properties));
     assert.strictEqual(v2.properties.schemaVersion.const, 2);
     assert.ok(v2.$defs.cell.required.includes('lastAcceptedAt'));
-    assert.strictEqual(v2.$defs.parameters.required.includes('stability'), true);
+    assert.strictEqual(v2.$defs.currentParameters.required.includes('processNoiseRate'), true);
   });
 });
 
@@ -630,7 +631,9 @@ describe('registerWithRouter', () => {
       assert.ok(!('smootherClass'       in response), 'smootherClass should not be exposed');
       assert.ok(!('smootherTau'         in response), 'smootherTau should not be exposed');
       assert.ok(!('smootherSteadyState' in response), 'smootherSteadyState should not be exposed');
-      assert.ok('stability'             in response, 'missing stability');
+      assert.ok('correctionDriftRate'   in response, 'missing correctionDriftRate');
+      assert.strictEqual(response.correctionDriftRate, 0.3);
+      assert.ok(!('stability'          in response), 'obsolete stability should not be exposed');
     } finally {
       cleanup();
     }
@@ -779,6 +782,17 @@ describe('registerWithRouter', () => {
 describe('learning gate helpers', () => {
   const pluginFactory = require('../index.js');
   const helpers = pluginFactory._test;
+
+  it('converts correction drift from knots per 30-day month to SI process noise', () => {
+    assert.strictEqual(helpers.correctionDriftRateToProcessNoiseRate(0), 0);
+    assert.ok(Math.abs(helpers.correctionDriftRateToProcessNoiseRate(0.3) - DEFAULT_PROCESS_NOISE_RATE) < 1e-18);
+    assert.ok(helpers.correctionDriftRateToProcessNoiseRate(3) > helpers.correctionDriftRateToProcessNoiseRate(0.3));
+    assert.strictEqual(helpers.correctionDriftRateToProcessNoiseRate(99), helpers.correctionDriftRateToProcessNoiseRate(3));
+  });
+
+  it('converts legacy stability seven to approximately one knot per month', () => {
+    assert.ok(Math.abs(helpers.legacyStabilityToCorrectionDriftRate(7) - 0.99) < 0.01);
+  });
 
   it('clamps the learning window to five seconds and adds a one-second gap', () => {
     assert.strictEqual(helpers.getSmoothingWindowSeconds({ smootherTimeSpan: 2 }), 5);
