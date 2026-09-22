@@ -307,41 +307,17 @@ const paramMeta = {
   sogFallback:           { label: 'Groundspeed fallback',                 type: 'boolean', description: 'Output Groundspeed as Boatspeed when the paddlewheel sensor is malfunctioning or stalled.' },
   stability:             { label: 'Stability (1–20)',                     type: 'number', min: 1, max: 20, step: 1, default: 7, description: 'How quickly the correction table adapts to new observations. Higher values mean slower, more stable changes.' },
   showStatistics:        { label: 'Show statistics (σ)',                  type: 'boolean', description: 'Display standard deviation alongside smoothed values for debugging.' },
-  smootherClass: {
-    label: 'Smoother type', type: 'select',
-    description: 'Smoothing applied to all sensor inputs for learning only.',
-    options: [
-      { value: 'MovingAverageSmoother', label: 'Moving average (window)' },
-      { value: 'ExponentialSmoother',   label: 'Exponential (τ)' },
-      { value: 'KalmanSmoother',        label: 'Kalman filter' },
-    ]
-  },
-  smootherTau: {
-    label: 'Time constant (τ)', type: 'number', unit: 's',
-    min: 1, max: 60, step: 0.5, default: 3,
-    description: 'Time constant in seconds.'
-  },
   smootherTimeSpan: {
     label: 'Window size', type: 'number', unit: 's',
-    min: 2, max: 60, step: 0.5, default: 5,
-    description: 'Moving-average window in seconds.'
-  },
-  smootherSteadyState: {
-    label: 'Kalman gain', type: 'number',
-    min: 0.01, max: 0.99, step: 0.01, default: 0.2,
-    description: 'Steady-state Kalman gain (0 ≈ slow/smooth, 1 ≈ fast/raw). Clamped to 0.01–0.99.'
+    min: 5, max: 60, step: 0.5, default: 5,
+    description: 'Moving-average window in seconds. Learning runs once per window plus a one-second gap.'
   },
 };
 
 // Settings groups for each UI section
 const ESTIMATION_SETTING_KEYS = ['sogFallback'];
 const LEARNING_SETTING_KEYS   = ['stability', 'suspendLearningOnNavigationState', 'assumeCurrent', 'showStatistics'];
-const SMOOTHER_SETTING_KEYS   = [
-  'smootherClass',
-  { key: 'smootherTau',         showIf: cfg => cfg.smootherClass === 'ExponentialSmoother' },
-  { key: 'smootherTimeSpan',    showIf: cfg => (cfg.smootherClass || 'MovingAverageSmoother') === 'MovingAverageSmoother' },
-  { key: 'smootherSteadyState', showIf: cfg => cfg.smootherClass === 'KalmanSmoother' },
-];
+const SMOOTHER_SETTING_KEYS   = ['smootherTimeSpan'];
 
 // Build one settings control for a key.
 function createSettingControl(key, meta, value) {

@@ -543,7 +543,10 @@ describe('registerWithRouter', () => {
       assert.ok('updateCorrectionTable' in response, 'missing updateCorrectionTable');
       assert.ok('suspendLearningOnNavigationState' in response, 'missing suspendLearningOnNavigationState');
       assert.ok(!('minSogForLearning' in response), 'obsolete minSogForLearning should not be exposed');
-      assert.ok('smootherClass'         in response, 'missing smootherClass');
+      assert.ok('smootherTimeSpan'      in response, 'missing smootherTimeSpan');
+      assert.ok(!('smootherClass'       in response), 'smootherClass should not be exposed');
+      assert.ok(!('smootherTau'         in response), 'smootherTau should not be exposed');
+      assert.ok(!('smootherSteadyState' in response), 'smootherSteadyState should not be exposed');
       assert.ok('stability'             in response, 'missing stability');
     } finally {
       cleanup();
@@ -693,6 +696,12 @@ describe('registerWithRouter', () => {
 describe('learning gate helpers', () => {
   const pluginFactory = require('../index.js');
   const helpers = pluginFactory._test;
+
+  it('clamps the learning window to five seconds and adds a one-second gap', () => {
+    assert.strictEqual(helpers.getSmoothingWindowSeconds({ smootherTimeSpan: 2 }), 5);
+    assert.strictEqual(helpers.getLearningIntervalMs({ smootherTimeSpan: 5 }), 6000);
+    assert.strictEqual(helpers.getLearningIntervalMs({ smootherTimeSpan: 8 }), 9000);
+  });
 
   it('suspends learning when the vessel is not moving', () => {
     const result = helpers.evaluateLearningMode({

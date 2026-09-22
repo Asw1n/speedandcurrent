@@ -20,6 +20,8 @@ const {
 const { CorrectionTable } = require('./correctionTable.js');
 
 const LONG_STABILIZING_MS = 60 * 1000;
+const MIN_SMOOTHING_WINDOW_SECONDS = 5;
+const LEARNING_GAP_SECONDS = 1;
 // navigation.state values that indicate the vessel is not moving. Only applied as an
 // override (see isVesselMoving) when options.suspendLearningOnNavigationState is enabled.
 const NOT_MOVING_NAVIGATION_STATES = new Set(['anchored', 'moored', 'motoring']);
@@ -29,7 +31,15 @@ function normalizeNavigationState(value) {
 }
 
 function getShortStabilizingMs(options = {}) {
-  return Math.max(0, Number(options.smootherTimeSpan) || 5) * 1000;
+  return Math.max(MIN_SMOOTHING_WINDOW_SECONDS, Number(options.smootherTimeSpan) || MIN_SMOOTHING_WINDOW_SECONDS) * 1000;
+}
+
+function getSmoothingWindowSeconds(options = {}) {
+  return Math.max(MIN_SMOOTHING_WINDOW_SECONDS, Number(options.smootherTimeSpan) || MIN_SMOOTHING_WINDOW_SECONDS);
+}
+
+function getLearningIntervalMs(options = {}) {
+  return (getSmoothingWindowSeconds(options) + LEARNING_GAP_SECONDS) * 1000;
 }
 
 function isCogOverrideActive(groundSpeedPolar, speedThreshold) {
@@ -165,11 +175,8 @@ module.exports = function (app) {
     assumeCurrent: false,
     suspendLearningOnNavigationState: false,
     tableName: 'correctionTable',
-    configVersion: 2,
-    smootherClass: 'MovingAverageSmoother',
-    smootherTau: 3,
+    configVersion: 3,
     smootherTimeSpan: 5,
-    smootherSteadyState: 0.2,
     showStatistics: false
   };
 
@@ -199,43 +206,28 @@ module.exports = function (app) {
    * writes it back if anything changed. Called once on every start().
    */
   function migrateConfig() {
-    const obsoleteKeys = ['headingSource', 'boatSpeedSource', 'SOGSource', 'attitudeSource', 'preventDuplication', 'minSogForLearning'];
+    const obsoleteKeys = [
+      'headingSource', 'boatSpeedSource', 'SOGSource', 'attitudeSource',
+      'preventDuplication', 'minSogForLearning', 'smootherClass',
+      'smootherTau', 'smootherSteadyState'
+    ];
     const hadObsolete = obsoleteKeys.some(k => k in options);
     for (const k of obsoleteKeys) delete options[k];
-    if (hadObsolete || (options.configVersion || 0) < 2) {
-      options.configVersion = 2;
+    const previousWindow = options.smootherTimeSpan;
+    options.smootherTimeSpan = getSmoothingWindowSeconds(options);
+    const windowChanged = previousWindow !== options.smootherTimeSpan;
+    if (hadObsolete || windowChanged || (options.configVersion || 0) < 3) {
+      options.configVersion = 3;
       saveOptions();
-      app.debug('Config migrated to v2: removed obsolete source-selection fields');
+      app.debug('Config migrated to v3: standardized correction-table learning smoothing');
     }
   }
 
-  /**
-   * Derives { SmootherClass, smootherOptions } from the current options.
-   * Enforces minimums so the smoother always has at least two observations for
-   * variance to be meaningful:
-   *   - MovingAverageSmoother: timeSpan >= 2 s  (≥ 2 samples at typical 1 Hz)
-   *   - ExponentialSmoother:   tau        >= 1 s
-   *   - KalmanSmoother:        steadyState in [0.01, 0.99]
-   */
+  /** Returns the fixed smoother used for all learning inputs. */
   function resolveSmootherConfig() {
-    const cls = options.smootherClass || 'MovingAverageSmoother';
-    if (cls === 'ExponentialSmoother') {
-      return {
-        SmootherClass: ExponentialSmoother,
-        smootherOptions: { timeConstant: Math.max(1, Number(options.smootherTau) || 3) }
-      };
-    }
-    if (cls === 'KalmanSmoother') {
-      const K = Math.min(0.99, Math.max(0.01, Number(options.smootherSteadyState) || 0.2));
-      return {
-        SmootherClass: KalmanSmoother,
-        smootherOptions: { steadyState: K }
-      };
-    }
-    // Default: MovingAverageSmoother
     return {
       SmootherClass: MovingAverageSmoother,
-      smootherOptions: { timeSpan: Math.max(2, Number(options.smootherTimeSpan) || 5) }
+      smootherOptions: { timeSpan: getSmoothingWindowSeconds(options) }
     };
   }
 
@@ -264,6 +256,7 @@ module.exports = function (app) {
   let table = null;
   let calculationIntervalSmoother = null;
   let lastCalculationTime = null;
+  let lastLearningAttemptTime = null;
 
   let rawHeading = null;
   let rawAttitude = null;
@@ -580,6 +573,7 @@ module.exports = function (app) {
     minSpeed = table.step[0];
     calculationIntervalSmoother = new ExponentialSmoother({ tau: 10 });
     lastCalculationTime = null;
+    lastLearningAttemptTime = null;
 
     //#region Handler and Polar Initialization
     const { SmootherClass, smootherOptions } = resolveSmootherConfig();
@@ -950,6 +944,8 @@ module.exports = function (app) {
    * silently returns if any required input is not yet ready.
    */
   function updateTable() {
+    const now = Date.now();
+    if (lastLearningAttemptTime !== null && now - lastLearningAttemptTime < getLearningIntervalMs(options)) return;
     lrnBoatSpeed.setVectorValue({ x: smoothedBoatSpeed.value, y: 0 }, { x: smoothedBoatSpeed.variance ?? 0, y: 0 });
     const learningMode = evaluateLearningMode({
       options,
@@ -988,6 +984,7 @@ module.exports = function (app) {
       return;
     }
 
+    lastLearningAttemptTime = now;
     table.update(
       smoothedBoatSpeed.value,
       smoothedAttitude.value?.roll,
@@ -1120,7 +1117,7 @@ module.exports = function (app) {
         }
       }
       // All other keys (sogFallback, estimateBoatSpeed, assumeCurrent,
-      // stability, smootherClass, etc.) are read
+      // stability, and smootherTimeSpan) are read
       // directly from options.* so no extra action needed.
       if (key === 'estimateBoatSpeed' && !value && correctedBoatSpeed) {
         Polar.clear(app, plugin.id, [correctedBoatSpeed]);
@@ -1130,10 +1127,9 @@ module.exports = function (app) {
       delete changedOptions[key];
     }
 
-    // Hot-apply smoother class / parameter changes to all user-tuned smoothers.
-    // (noCurrent and smoothedCurrent keep their own fixed Kalman settings.)
-    const SMOOTHER_KEYS = ['smootherClass', 'smootherTau', 'smootherTimeSpan', 'smootherSteadyState'];
-    if (changedKeys.some(k => SMOOTHER_KEYS.includes(k))) {
+    // Hot-apply the learning window to all user-tuned smoothers.
+    if (changedKeys.includes('smootherTimeSpan')) {
+      options.smootherTimeSpan = getSmoothingWindowSeconds(options);
       const { SmootherClass: SC, smootherOptions: so } = resolveSmootherConfig();
       for (const s of [smoothedHeading, smoothedBoatSpeed, smoothedGroundSpeed]) {
         if (s) { s.setSmootherClass(SC); s.setSmootherOptions(so); }
@@ -1149,6 +1145,8 @@ module.exports = function (app) {
 module.exports._test = {
   normalizeNavigationState,
   getShortStabilizingMs,
+  getSmoothingWindowSeconds,
+  getLearningIntervalMs,
   isVesselMoving,
   evaluateLearningMode,
   isCogOverrideActive,
