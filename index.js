@@ -25,6 +25,7 @@ const LEARNING_GAP_SECONDS = 1;
 // navigation.state values that indicate the vessel is not moving. Only applied as an
 // override (see isVesselMoving) when options.suspendLearningOnNavigationState is enabled.
 const NOT_MOVING_NAVIGATION_STATES = new Set(['anchored', 'moored', 'motoring']);
+const OBSOLETE_SMOOTHER_KEYS = new Set(['smootherClass', 'smootherTau', 'smootherSteadyState']);
 
 function normalizeNavigationState(value) {
   return typeof value === 'string' ? value.trim().toLowerCase() : null;
@@ -40,6 +41,36 @@ function getSmoothingWindowSeconds(options = {}) {
 
 function getLearningIntervalMs(options = {}) {
   return (getSmoothingWindowSeconds(options) + LEARNING_GAP_SECONDS) * 1000;
+}
+
+function migrateCorrectionTableData(data, { filePath, statSync = fs.statSync, now = Date.now(), debug = () => {} } = {}) {
+  if (!data || (data.schemaVersion !== undefined && data.schemaVersion !== 1) || data.schemaVersion === 2) {
+    return { data, migrated: false };
+  }
+
+  let lastAcceptedAt;
+  try {
+    const stat = statSync(filePath);
+    lastAcceptedAt = Number.isFinite(stat?.mtimeMs) ? stat.mtimeMs : null;
+  } catch (err) {
+    lastAcceptedAt = null;
+  }
+  if (!Number.isFinite(lastAcceptedAt)) {
+    lastAcceptedAt = now;
+    debug(`Correction table migration used load time for ${filePath}: file modification time unavailable`);
+  }
+
+  return {
+    migrated: true,
+    data: {
+      ...data,
+      schemaVersion: 2,
+      table: data.table.map(row => row.map(cell => ({
+        ...cell,
+        lastAcceptedAt: cell?.state ? lastAcceptedAt : null
+      })))
+    }
+  };
 }
 
 function isCogOverrideActive(groundSpeedPolar, speedThreshold) {
@@ -427,7 +458,9 @@ module.exports = function (app) {
 
     // --- Settings API ---
     router.get('/api/settings', (req, res) => {
-      res.json({ ...options, ...changedOptions });
+      const active = { ...options, ...changedOptions };
+      for (const key of OBSOLETE_SMOOTHER_KEYS) delete active[key];
+      res.json(active);
     });
 
     router.put('/api/settings', (req, res) => {
@@ -442,8 +475,14 @@ module.exports = function (app) {
           return res.status(400).json({ error: `Key '${k}' is managed via the table manager` });
         }
       }
-      changedOptions = { ...changedOptions, ...body };
-      res.json({ ...options, ...changedOptions });
+      const accepted = Object.fromEntries(Object.entries(body).filter(([key]) => !OBSOLETE_SMOOTHER_KEYS.has(key)));
+      if ('smootherTimeSpan' in accepted) {
+        accepted.smootherTimeSpan = getSmoothingWindowSeconds(accepted);
+      }
+      changedOptions = { ...changedOptions, ...accepted };
+      const active = { ...options, ...changedOptions };
+      for (const key of OBSOLETE_SMOOTHER_KEYS) delete active[key];
+      res.json(active);
     });
 
     // --- Correction Table Manager API ---
@@ -1016,8 +1055,13 @@ module.exports = function (app) {
     let fileData = Table2D.readFromFile(filePath);
     if (fileData) {
       try {
-        const table = CorrectionTable.fromJSON(fileData, stability);
+        const migration = migrateCorrectionTableData(fileData, {
+          filePath,
+          debug: message => app.debug(message)
+        });
+        const table = CorrectionTable.fromJSON(migration.data, stability);
         table.setDisplayAttributes({ label: table.id }); // Table2D API unchanged
+        if (migration.migrated) saveMigratedTable(table, filePath);
         app.debug("Correction table loaded: " + (fileData.id || filePath));
         return table;
       } catch (err) {
@@ -1075,6 +1119,18 @@ module.exports = function (app) {
       fs.writeFileSync(filePath, data);
     } catch (err) {
       app.error(`Error saving correction table: ${err.message}`);
+    }
+  }
+
+  function saveMigratedTable(correctionTable, filePath) {
+    const temporaryPath = `${filePath}.migration-${process.pid}-${Date.now()}.tmp`;
+    try {
+      fs.writeFileSync(temporaryPath, JSON.stringify(correctionTable.toJSON(), null, 2));
+      fs.renameSync(temporaryPath, filePath);
+      app.debug(`Correction table migrated to schema v2: ${filePath}`);
+    } catch (err) {
+      try { fs.unlinkSync(temporaryPath); } catch {}
+      app.debug(`Correction table migration could not be persisted for ${filePath}: ${err.message}`);
     }
   }
 
@@ -1147,6 +1203,7 @@ module.exports._test = {
   getShortStabilizingMs,
   getSmoothingWindowSeconds,
   getLearningIntervalMs,
+  migrateCorrectionTableData,
   isVesselMoving,
   evaluateLearningMode,
   isCogOverrideActive,

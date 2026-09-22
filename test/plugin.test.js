@@ -484,6 +484,48 @@ describe('correction table persistence', () => {
     assert.ok(Math.abs(cell.y - (-0.1)) < 1e-12);
     assert.doesNotThrow(() => table.getCorrection(0, 0));
   });
+
+  it('migrates fixture-based implicit and explicit v1 data using the file timestamp', () => {
+    const { migrateCorrectionTableData } = require('../index.js')._test;
+    for (const fixture of ['correction-table-implicit-v1.json', 'correction-table-explicit-v1.json']) {
+      const data = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', fixture), 'utf8'));
+      const result = migrateCorrectionTableData(data, {
+        filePath: 'fixture.json',
+        statSync: () => ({ mtimeMs: 123456 }),
+        now: 999999
+      });
+      assert.strictEqual(result.migrated, true);
+      assert.strictEqual(result.data.schemaVersion, 2);
+      assert.strictEqual(result.data.table[0][0].lastAcceptedAt, 123456);
+      assert.strictEqual(result.data.table[0][1].lastAcceptedAt, null);
+    }
+  });
+
+  it('uses load time and debug logging when a legacy file has no valid mtime', () => {
+    const messages = [];
+    const result = require('../index.js')._test.migrateCorrectionTableData({
+      id: 'legacy', row: { min: 0, max: 0, step: 1 }, col: { min: 0, max: 0, step: 1 },
+      parameters: {}, table: [[{ state: { mean: [[1], [2]], covariance: [[1, 0], [0, 1]], index: 1 } }]], displayAttributes: {}
+    }, { filePath: 'missing.json', statSync: () => ({ mtimeMs: NaN }), now: 777, debug: message => messages.push(message) });
+
+    assert.strictEqual(result.data.table[0][0].lastAcceptedAt, 777);
+    assert.strictEqual(messages.length, 1);
+  });
+
+  it('leaves version-2 timestamps unchanged and migration is idempotent', () => {
+    const { migrateCorrectionTableData } = require('../index.js')._test;
+    const data = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'correction-table-v2.json'), 'utf8'));
+    assert.deepStrictEqual(migrateCorrectionTableData(data, { filePath: 'v2.json' }), { data, migrated: false });
+  });
+
+  it('keeps the v1 schema immutable and requires the v2 discriminator', () => {
+    const v1 = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'docs', 'correction-table-v1.schema.json'), 'utf8'));
+    const v2 = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'docs', 'correction-table-v2.schema.json'), 'utf8'));
+    assert.ok(!('schemaVersion' in v1.properties));
+    assert.strictEqual(v2.properties.schemaVersion.const, 2);
+    assert.ok(v2.$defs.cell.required.includes('lastAcceptedAt'));
+    assert.strictEqual(v2.$defs.parameters.required.includes('stability'), true);
+  });
 });
 
 describe('module export', () => {

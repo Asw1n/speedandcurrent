@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/meri-imperiumi/speedandcurrent/schema/correction-table-v2.schema.json",
+  "title": "Speed and Current Correction Table v2",
+  "description": "Version 2 stores the last accepted update for every learned cell as UTC epoch milliseconds. Empty cells use null.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "row", "col", "parameters", "table", "displayAttributes"],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "id": { "type": "string", "minLength": 1 },
+    "row": { "$ref": "#/$defs/axis" },
+    "col": { "$ref": "#/$defs/axis" },
+    "parameters": { "$ref": "#/$defs/parameters" },
+    "table": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/cell" } }
+    },
+    "displayAttributes": { "type": "object", "additionalProperties": true }
+  },
+  "$defs": {
+    "axis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max", "step"],
+      "properties": {
+        "min": { "type": "number" },
+        "max": { "type": "number" },
+        "step": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stability", "observation", "dynamic"],
+      "properties": {
+        "stability": { "type": "number" },
+        "observation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["stateProjection", "covariance", "dimension"],
+          "properties": {
+            "stateProjection": { "$ref": "#/$defs/matrix2" },
+            "covariance": { "const": "per-observation" },
+            "dimension": { "const": 2 }
+          }
+        },
+        "dynamic": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["transition", "covariance"],
+          "properties": {
+            "transition": { "$ref": "#/$defs/matrix2" },
+            "covariance": { "$ref": "#/$defs/vector2" }
+          }
+        }
+      }
+    },
+    "cell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "lastAcceptedAt"],
+      "properties": {
+        "state": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["mean", "covariance", "index"],
+              "properties": {
+                "mean": { "$ref": "#/$defs/mean" },
+                "covariance": { "$ref": "#/$defs/matrix2" },
+                "index": { "type": "integer", "minimum": 0 }
+              }
+            }
+          ]
+        },
+        "lastAcceptedAt": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 0 }] }
+      }
+    },
+    "matrix2": {
+      "type": "array", "minItems": 2, "maxItems": 2,
+      "prefixItems": [{ "$ref": "#/$defs/vector2" }, { "$ref": "#/$defs/vector2" }],
+      "items": false
+    },
+    "vector2": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "number" } },
+    "mean": {
+      "type": "array", "minItems": 2, "maxItems": 2,
+      "prefixItems": [{ "$ref": "#/$defs/vector1" }, { "$ref": "#/$defs/vector1" }],
+      "items": false
+    },
+    "vector1": { "type": "array", "minItems": 1, "maxItems": 1, "items": { "type": "number" } }
+  }
+}

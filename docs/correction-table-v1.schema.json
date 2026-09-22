@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/meri-imperiumi/speedandcurrent/schema/correction-table.schema.json",
+  "title": "Speed and Current Correction Table",
+  "description": "Documentation of the current private correction-table format emitted by Table2D and CorrectionTable. Table identity is managed by the filename/plugin setting; the serialized id is retained for compatibility.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "row",
+    "col",
+    "parameters",
+    "table"
+    ,"displayAttributes"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "row": {
+      "$ref": "#/$defs/axis",
+      "description": "Speed axis. The row index increases with speed."
+    },
+    "col": {
+      "$ref": "#/$defs/axis",
+      "description": "Heel axis. The column index increases from minimum to maximum heel."
+    },
+    "parameters": {
+      "$ref": "#/$defs/filterParameters",
+      "description": "Kalman filter model descriptor. `covariance` fields are never functions — they are either fixed matrices (legacy) or the literal marker \"per-observation\" (current), meaning the actual measurement-noise covariance is computed live in CorrectionEstimator.update() from sensor variances and is not persisted."
+    },
+    "table": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "$ref": "#/$defs/cell"
+        }
+      },
+      "description": "Rows must contain one cell for each value on the row axis, and each row must contain one cell for each value on the column axis. Array dimensions are checked semantically because JSON Schema cannot calculate them from axis values."
+    },
+    "displayAttributes": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "axis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min", "max", "step"],
+      "properties": {
+        "min": {
+          "type": "number"
+        },
+        "max": {
+          "type": "number"
+        },
+        "step": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "filterParameters": {
+      "oneOf": [
+        { "$ref": "#/$defs/filterParametersV2" },
+        { "$ref": "#/$defs/filterParametersLegacy" }
+      ],
+      "description": "V2 (current) is written by all tables saved after per-observation covariance support was added. Legacy is what earlier versions of the plugin wrote; files in that format still load — the observation.covariance matrix they contain was never actually used for filtering and is ignored on load."
+    },
+    "filterParametersV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stability", "observation", "dynamic"],
+      "properties": {
+        "stability": {
+          "type": "number",
+          "description": "Determines the process-noise (Q) magnitude: 10^-stability."
+        },
+        "observation": { "$ref": "#/$defs/observationParametersV2" },
+        "dynamic": { "$ref": "#/$defs/dynamicParameters" }
+      }
+    },
+    "observationParametersV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stateProjection", "covariance", "dimension"],
+      "properties": {
+        "stateProjection": { "$ref": "#/$defs/matrix2" },
+        "covariance": {
+          "const": "per-observation",
+          "description": "Marker only. The measurement-noise covariance (R) is computed per observation from live sensor variances and supplied to the filter at runtime; it is not a persisted value."
+        },
+        "dimension": { "const": 2 }
+      }
+    },
+    "filterParametersLegacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observation", "dynamic"],
+      "properties": {
+        "observation": { "$ref": "#/$defs/observationParameters" },
+        "dynamic": { "$ref": "#/$defs/dynamicParameters" }
+      }
+    },
+    "observationParameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stateProjection", "covariance", "dimension"],
+      "properties": {
+        "stateProjection": { "$ref": "#/$defs/matrix2" },
+        "covariance": { "$ref": "#/$defs/matrix2" },
+        "dimension": { "const": 2 }
+      }
+    },
+    "dynamicParameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transition", "covariance"],
+      "properties": {
+        "transition": { "$ref": "#/$defs/matrix2" },
+        "covariance": { "$ref": "#/$defs/vector2" }
+      }
+    },
+    "matrix2": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        { "$ref": "#/$defs/vector2" },
+        { "$ref": "#/$defs/vector2" }
+      ],
+      "items": false
+    },
+    "cell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state"
+      ],
+      "properties": {
+        "state": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/filterState"
+            }
+          ]
+        }
+      }
+    },
+    "filterState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mean",
+        "covariance",
+        "index"
+      ],
+      "properties": {
+        "mean": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/vector1"
+            },
+            {
+              "$ref": "#/$defs/vector1"
+            }
+          ],
+          "items": false,
+          "description": "Two-element column vector."
+        },
+        "covariance": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/vector2"
+            },
+            {
+              "$ref": "#/$defs/vector2"
+            }
+          ],
+          "items": false
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "vector2": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "number"
+      }
+    },
+    "vector1": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "type": "number"
+      }
+    }
+  }
+}

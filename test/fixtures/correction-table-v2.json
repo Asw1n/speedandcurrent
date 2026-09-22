@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 2,
+  "id": "v2",
+  "row": { "min": 0, "max": 0, "step": 1 },
+  "col": { "min": 0, "max": 0, "step": 1 },
+  "parameters": {
+    "stability": 7,
+    "observation": { "stateProjection": [[1, 0], [0, 1]], "covariance": "per-observation", "dimension": 2 },
+    "dynamic": { "transition": [[1, 0], [0, 1]], "covariance": [0, 0] }
+  },
+  "table": [[{ "state": { "mean": [[0.4], [-0.3]], "covariance": [[0.03, 0], [0, 0.03]], "index": 4 }, "lastAcceptedAt": 1700000000000 }]],
+  "displayAttributes": { "label": "v2" }
+}
