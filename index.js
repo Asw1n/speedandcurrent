@@ -995,7 +995,7 @@ module.exports = function (app) {
       setLifecycleWarning('attitude.roll', 'incomplete', 'navigation.attitude.roll');
     }
 
-    PolarSmoother.send(app, plugin.id, [smoothedCurrent, smoothedResidual]);
+    PolarSmoother.send(app, plugin.id, [smoothedCurrent]);
 
     Polar.send(app, plugin.id, [correctedBoatSpeed]);
   }

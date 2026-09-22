@@ -289,7 +289,7 @@ Every time conditions are right — plugin running for >60 seconds, smoothers se
 observation = R(ψ)⁻¹ · V_SOG − R(ψ)⁻¹ · V_current − V_STW
 ```
 
-where `R(ψ)` rotates from ground frame to boat frame using true heading `ψ`. In plain terms: rotate GPS velocity into the boat frame, subtract the current estimate (also rotated), subtract the raw paddle wheel velocity. The residual is the implied sensor error for the current speed and heel.
+where `R(ψ)` rotates from ground frame to boat frame using true heading `ψ`. In plain terms: rotate GPS velocity into the boat frame, subtract the raw paddle wheel velocity. The residual is the implied sensor error for the current speed and heel.
 
 The Kalman update combines this observation with the cell's existing belief:
 
@@ -298,11 +298,11 @@ K = P · (P + R_obs)⁻¹
 x_new = x_old + K · (observation − x_old)
 ```
 
-where P is the cell's current covariance and R_obs is the observation covariance derived from the measurement uncertainty of all contributing signals (SOG variance + current variance + STW variance, rotated appropriately). It also includes heading uncertainty in radians squared. For $u = R(-heading)(groundSpeed - current)$, the heading contribution is $J \sigma_h^2 J^T$, where $J = [u_y, -u_x]^T$. This is applied once to the combined ground-speed-minus-current vector because both vectors share the same heading error. **Noisy observations produce a smaller gain and move the cell estimate less.**
+where P is the cell's current covariance and R_obs is the observation covariance derived from the measurement uncertainty of all contributing signals (SOG variance + STW variance, rotated appropriately). It also includes heading uncertainty in radians squared. For $u = R(-heading)(groundSpeed - current)$, the heading contribution is $J \sigma_h^2 J^T$, where $J = [u_y, -u_x]^T$. This is applied once to the combined ground-speed-minus-current vector because both vectors share the same heading error. **Noisy observations produce a smaller gain and move the cell estimate less.**
 
 ### Time-scaled aging and correction drift
 
-Each cell has a small **process-noise rate** that allows it to drift slowly over time, reflecting that a paddle wheel's error can change with fouling, recalibration, or crew weight distribution. For an elapsed interval `dt`, the process covariance added to each diagonal is:
+Each cell has a small **process-noise rate** that allows it to drift slowly over time, reflecting that a paddle wheel's error can change. For an elapsed interval `dt`, the process covariance added to each diagonal is:
 
 ```text
 effectiveDt = min(dt, 90 days)
