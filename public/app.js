@@ -303,7 +303,6 @@ const paramMeta = {
   estimateBoatSpeed:     { label: 'Estimate boat speed',                  type: 'boolean' },
   updateCorrectionTable: { label: 'Update correction table',              type: 'boolean' },
   suspendLearningOnNavigationState: { label: 'Suspend on navigation.state', type: 'boolean', description: 'When enabled, navigation.state can override the vessel\u2019s own SOG-based moving/not-moving state: anchored, moored, or motoring are treated as not moving (learning suspended, leeway zeroed). It can never force "moving" when SOG says otherwise.' },
-  assumeCurrent:         { label: 'Assume current during update',         type: 'boolean', description: 'Experimental, works best when currents are relatively stable.' },
   sogFallback:           { label: 'Groundspeed fallback',                 type: 'boolean', description: 'Output Groundspeed as Boatspeed when the paddlewheel sensor is malfunctioning or stalled.' },
   correctionDriftRate:   { label: 'Correction drift',                    type: 'number', unit: 'knots/month', min: 0, max: 3, step: 0.1, default: 0.3, description: 'How quickly the correction may change over time (knots/month). 0.3 knots/month means the correction can typically change by about 0.3 knots over a month.' },
   showStatistics:        { label: 'Show statistics (σ)',                  type: 'boolean', description: 'Display standard deviation alongside smoothed values for debugging.' },
@@ -316,7 +315,7 @@ const paramMeta = {
 
 // Settings groups for each UI section
 const ESTIMATION_SETTING_KEYS = ['sogFallback'];
-const LEARNING_SETTING_KEYS   = ['correctionDriftRate', 'suspendLearningOnNavigationState', 'assumeCurrent', 'showStatistics'];
+const LEARNING_SETTING_KEYS   = ['correctionDriftRate', 'suspendLearningOnNavigationState', 'showStatistics'];
 const SMOOTHER_SETTING_KEYS   = ['smootherTimeSpan'];
 
 // Build one settings control for a key.
@@ -604,11 +603,8 @@ function renderLiveSections() {
   // Estimation — warnings
   renderWarnings('estimation-warnings', [...estimationInputs, ...estimationIntermediates, ...estimationOutputs]);
 
-  // Learning — inputs: smoothed sensors + current if assumeCurrent
-  const learningCurrentPolars = (config && config.assumeCurrent)
-    ? filterById(state.polarsAll, ['current.smoothed'])
-    : [];
-  const learningPolars = [...filterById(state.polarsAll, ['groundSpeed.smoothed']), ...learningCurrentPolars];
+  // Learning — inputs
+  const learningPolars = filterById(state.polarsAll, ['groundSpeed.smoothed']);
   const learningDeltas = filterById(state.deltasAll, ['heading.smoothed', 'boatSpeed.smoothed']);
   const learningAttitudes = filterById(state.attitudesAll, ['attitude.smoothed']);
   renderGroupInto('learning-inputs',

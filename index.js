@@ -144,8 +144,6 @@ function evaluateLearningMode({ options = {}, vesselMoving = true, stabilizingUn
 function evaluateObservationGate({
   learningMode,
   inputsReady,
-  assumeCurrent,
-  currentReady,
   stw,
   sog,
   speedThreshold,
@@ -160,7 +158,7 @@ function evaluateObservationGate({
     return { state: 'skipped', reason: 'stabilizing' };
   }
   if (!inputsReady) {
-    return { state: 'invalid', reason: assumeCurrent && !currentReady ? 'missing_current_when_required' : 'missing_input' };
+    return { state: 'invalid', reason: 'missing_input' };
   }
   if (!(stw > speedThreshold)) {
     return { state: 'skipped', reason: 'stw_below_threshold' };
@@ -222,7 +220,6 @@ module.exports = function (app) {
     estimateBoatSpeed: false,
     updateCorrectionTable: true,
     correctionDriftRate: DEFAULT_CORRECTION_DRIFT_RATE,
-    assumeCurrent: false,
     suspendLearningOnNavigationState: false,
     tableName: 'correctionTable',
     configVersion: 3,
@@ -263,7 +260,7 @@ module.exports = function (app) {
     const obsoleteKeys = [
       'headingSource', 'boatSpeedSource', 'SOGSource', 'attitudeSource',
       'preventDuplication', 'minSogForLearning', 'stability', 'smootherClass',
-      'smootherTau', 'smootherSteadyState'
+      'smootherTau', 'smootherSteadyState', 'assumeCurrent'
     ];
     const hadObsolete = obsoleteKeys.some(k => k in options);
     for (const k of obsoleteKeys) delete options[k];
@@ -863,11 +860,6 @@ module.exports = function (app) {
     reportFull.addAttitude(smoothedAttitude);
     reportFull.addDelta(smoothedBoatSpeed);
     reportFull.addPolar(smoothedGroundSpeed);
-    // smoothedCurrent is already added by the estimateBoatSpeed block when that is on;
-    // only add it here when estimateBoatSpeed is off, to avoid a duplicate entry.
-    if (options.assumeCurrent && !options.estimateBoatSpeed) {
-      reportFull.addPolar(smoothedCurrent);
-    }
     reportFull.addTable(table);
 
     //#endregion
@@ -1010,7 +1002,7 @@ module.exports = function (app) {
 
   /**
    * Updates the correction table from the current smoothed inputs.
-   * Reads assumeCurrent and minSpeed from module-level options/state;
+    * Reads minSpeed from module-level state;
    * silently returns if any required input is not yet ready.
    */
   function updateTable() {
@@ -1035,12 +1027,9 @@ module.exports = function (app) {
     }
     const inputsReady = smoothedAttitude.ready && Number.isFinite(smoothedAttitude.value?.roll)
       && smoothedBoatSpeed.ready && smoothedHeading.ready && smoothedGroundSpeed.ready;
-    const currentReady = !options.assumeCurrent || smoothedCurrent.ready;
     const observationGate = evaluateObservationGate({
       learningMode,
       inputsReady,
-      assumeCurrent: options.assumeCurrent,
-      currentReady,
       stw: smoothedBoatSpeed.value,
       sog: smoothedGroundSpeed.magnitude,
       speedThreshold: minSpeed
@@ -1059,7 +1048,7 @@ module.exports = function (app) {
       smoothedBoatSpeed.value,
       smoothedAttitude.value?.roll,
       smoothedGroundSpeed,
-      options.assumeCurrent ? smoothedCurrent : noCurrent,
+      noCurrent,
       lrnBoatSpeed,
       smoothedHeading.value,
       smoothedHeading.variance
@@ -1203,8 +1192,8 @@ module.exports = function (app) {
           }
         }
       }
-      // All other keys (sogFallback, estimateBoatSpeed, assumeCurrent,
-      // correctionDriftRate, and smootherTimeSpan) are read
+      // All other keys (sogFallback, estimateBoatSpeed, correctionDriftRate,
+      // and smootherTimeSpan) are read
       // directly from options.* so no extra action needed.
       if (key === 'estimateBoatSpeed' && !value && correctedBoatSpeed) {
         Polar.clear(app, plugin.id, [correctedBoatSpeed]);

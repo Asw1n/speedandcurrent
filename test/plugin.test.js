@@ -716,6 +716,21 @@ describe('registerWithRouter', () => {
     }
   });
 
+  it('removes the legacy assumeCurrent setting on startup', async () => {
+    const { app, cleanup } = createAppShim();
+    let plugin;
+    try {
+      app.savePluginOptions({ assumeCurrent: true, configVersion: 4 });
+      plugin = require('../index.js')(app);
+      plugin.start();
+
+      assert.strictEqual('assumeCurrent' in app.readPluginOptions(), false);
+    } finally {
+      if (plugin) await plugin.stop();
+      cleanup();
+    }
+  });
+
   it('POST /api/tables/load keeps the active table when the requested table is malformed', () => {
     const { app, cleanup } = createAppShim();
     let plugin;
@@ -828,8 +843,6 @@ describe('learning gate helpers', () => {
     const result = helpers.evaluateObservationGate({
       learningMode,
       inputsReady: false,
-      assumeCurrent: false,
-      currentReady: true,
       stw: 3,
       sog: 3,
       speedThreshold: 1,
@@ -843,8 +856,6 @@ describe('learning gate helpers', () => {
     const result = helpers.evaluateObservationGate({
       learningMode,
       inputsReady: true,
-      assumeCurrent: false,
-      currentReady: true,
       stw: 3,
       speedThreshold: 1,
       sog: 0.2,
@@ -858,8 +869,6 @@ describe('learning gate helpers', () => {
     const result = helpers.evaluateObservationGate({
       learningMode,
       inputsReady: true,
-      assumeCurrent: true,
-      currentReady: true,
       stw: 3,
       speedThreshold: 1,
       sog: 3,

@@ -144,8 +144,6 @@ The **Correction Table Learning** section has its own independent toggle. Learni
 
 The panel shows the **smoothed** sensor inputs used for table updates — heading, boat speed, ground speed, and attitude. These are the same signals as in the Estimation panel, but averaged over the smoother window before being fed into the learning algorithm. This averaging reduces the influence of short-term fluctuations on the table update.
 
-When **Assume Current** is enabled, the smoothed current estimate is also shown as a learning input.
-
 Warnings appear here if any smoothed input is unavailable.
 
 The panel also shows whether learning is currently active, suspended, or skipped for the latest observation. Learning is normally gated by SOG: observations below the current table speed-step threshold are skipped. When **Suspend on navigation.state = motoring** is enabled and `navigation.state` is known, `anchored`, `moored`, and `motoring` suspend learning; an unavailable or unknown state falls back to the SOG gate.
@@ -157,7 +155,6 @@ The panel also shows whether learning is currently active, suspended, or skipped
 | **Update Correction Table** | On | Master toggle. Allow the table to update from current observations. |
 | **Suspend on navigation.state = motoring** | Off | When enabled, suspend learning when a known `navigation.state` reports `anchored`, `moored`, or `motoring`. When disabled, `navigation.state` does not override the SOG-based moving check. |
 | **Correction drift** | 0.3 knots/month | How quickly the correction may change over time (knots/month). 0.3 knots/month means the correction can typically change by about 0.3 knots over a month. Higher values adapt faster but may be less stable. Range: 0.0–3.0 knots/month. |
-| **Assume Current (experimental)** | Off | Include the running current estimate in the table update calculation. Only enable once the current estimate has had time to stabilise and tidal conditions are relatively steady. |
 | **Show Statistics (σ)** | Off | Display standard deviation alongside each smoothed value. Useful for spotting noisy sensors. |
 
 ### Smoothing and learning cadence
@@ -329,11 +326,3 @@ The corrected STW vector is rotated into the ground frame using heading, then su
 This raw estimate is fed into a **Kalman smoother with very low process noise** (process variance ≈ 10⁻⁶), so it changes very slowly, integrating over many minutes rather than chasing individual GPS fluctuations. At startup the estimate is strongly initialised to zero.
 
 Current estimation requires an accurate boat speed, so it is gated by the 60-second stabilisation period and only runs when **Estimate Boat Speed** is enabled.
-
-### Current and table learning
-
-Current estimation always runs alongside speed correction — it is a direct byproduct of comparing the GPS velocity with the corrected STW vector. You cannot have one without the other.
-
-For table *learning*, however, current can be left out of the equation without significant harm. When a boat sails different headings over time — tacking, gybing, reaching — any steady current appears as an error in one direction on one heading and the opposite direction on another. These errors cancel in the long-term average, so the table converges on the correct speed correction regardless. This is why the default (**Assume Current** off) uses a zero-current placeholder rather than the live estimate.
-
-Including the current estimate (**Assume Current** on) would be more accurate in principle, but it introduces a dependency: the current estimate is only as good as the speed correction that produced it. Early in the table's life, when corrections are rough, the current estimate is also rough, and feeding it back into learning can amplify rather than reduce error. There is also a circularity: better speed correction → better current estimate → better speed correction. Enabling this before the table has had time to settle can cause the two to pull each other in the wrong direction, particularly in changing tidal conditions. Use it only once the table is reasonably well populated and current conditions are stable.

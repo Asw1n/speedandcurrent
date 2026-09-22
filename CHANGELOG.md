@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The correction table now overlays the current uncorrected (raw) and corrected speed/heel as red and blue dots positioned directly on the grid, with a matching legend entry.
 
 ### Changed
+- Correction-table learning no longer incorporates the estimated current, and the related setting has been removed.
 - Correction-table process noise is now configured as a user-facing correction drift rate in knots/month, with a conservative default of 0.3 and an SI conversion internally. Legacy stability settings migrate silently.
 - Correction interpolation now includes mature cells within 2.5 normalized grid-cell units.
 - Correction learning now always uses a moving-average window of at least 5 seconds, with a one-second gap between observation windows. Older smoother selections migrate silently.
