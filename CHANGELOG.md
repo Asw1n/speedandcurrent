@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The correction table now overlays the current uncorrected (raw) and corrected speed/heel as red and blue dots positioned directly on the grid, with a matching legend entry.
 
 ### Changed
+- Requires signalk-server >=2.35.0 for the upstream metadata-first subscription fix ([SignalK/signalk-server#3216](https://github.com/SignalK/signalk-server/pull/3216)).
 - Correction-table learning no longer incorporates the estimated current, and the related setting has been removed.
 - Correction-table process noise is now configured as a user-facing correction drift rate in knots/month, with a conservative default of 0.3 and an SI conversion internally. Legacy stability settings migrate silently.
 - Correction interpolation now includes mature cells within 2.5 normalized grid-cell units.
@@ -20,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Cells become eligible after one accepted observation; the explicit maturity gate remains in place at zero for future tuning.
 
 ### Fixed
+- Removed idle-triggered input resubscriptions, including boat-speed inputs, to avoid replaying cached values during sensor outages. Idle/stale warnings remain, and existing subscriptions receive data when the source resumes. Synchronous startup safeguards are preserved.
 - The boat-speed estimation inputs now prioritize Boatspeed unless groundspeed fallback is selected, and the correction table marks its most recently updated cell with a thin black border reflected in the legend.
 - The learning status Reason row is now hidden when the last observation was accepted, instead of showing a redundant "Observation recorded" message.
 - `navigation.state` no longer misreports as "not ready" a few seconds after each update; it is an event path that only publishes on transition, so the generic telemetry staleness timer no longer applies to it. The Inputs tab now also displays its current value.

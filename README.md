@@ -6,7 +6,9 @@ Most paddle wheel logs carry a systematic error that varies with boat speed and 
 
 This plugin builds and maintains a **2-dimensional correction table** — indexed by speed and heel — that is populated automatically from real sailing observations. No calibration runs, no spreadsheets, no manual entry. Once the table has enough coverage the plugin applies per-point corrections to `navigation.speedThroughWater`, derives leeway from the lateral component of the correction, and estimates water current by subtracting the corrected boat speed vector from the GPS ground speed vector.
 
-In the current implementation the plugin is also explicit about runtime state: if an input goes idle or stale, the webapp shows a warning and the handler resubscribes; when estimation is disabled or the plugin stops, the active output paths are cleared with `null` so downstream consumers do not keep stale values.
+Requires signalk-server >=2.35.0 for reliable metadata-first input subscriptions.
+
+If an input goes idle or stale, the webapp shows a warning while the subscription stays attached, ready for the next delta; when estimation is disabled or the plugin stops, the active output paths are cleared with `null` so downstream consumers do not keep stale values.
 
 In broad terms the plugin:
 

@@ -112,7 +112,7 @@ function createAppShim() {
     config: {
       configPath: tmpDir,
       appPath: tmpDir,
-      version: '2.24.0',
+      version: '2.35.0',
       name: 'signalk-server',
       basePath: '/signalk/v1',
       defaults: {},
@@ -1195,6 +1195,63 @@ describe('plugin lifecycle', () => {
 
       await plugin.stop();
     } finally {
+      cleanup();
+    }
+  });
+});
+
+describe('input silence without recovery resubscriptions', () => {
+  it('keeps subscriptions attached and clears warnings on resumed data', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+    const { app, cleanup } = createAppShim();
+    const subscribers = new Map();
+    let subscriptions = 0;
+    let unsubscriptions = 0;
+    let messages = 0;
+    app.handleMessage = () => { messages++; };
+    app.subscriptionmanager.subscribe = (msg, unsubscribes, _err, callback) => {
+      subscriptions++;
+      for (const { path } of msg.subscribe) {
+        if (!subscribers.has(path)) subscribers.set(path, new Set());
+        subscribers.get(path).add(callback);
+      }
+      unsubscribes.push(() => {
+        unsubscriptions++;
+        for (const { path } of msg.subscribe) subscribers.get(path).delete(callback);
+      });
+    };
+    const plugin = require('../index.js')(app);
+    try {
+      const routes = {};
+      plugin.registerWithRouter({
+        get: (p, cb) => { routes[p] = cb; }, put: () => {}, post: () => {}
+      });
+      plugin.start();
+      const deliverHeading = value => {
+        for (const callback of subscribers.get('navigation.headingTrue')) {
+          callback({ updates: [{ values: [{ path: 'navigation.headingTrue', value }] }] });
+        }
+      };
+      deliverHeading(1);
+      const initialSubscriptions = subscriptions;
+      const initialMessages = messages;
+      t.mock.timers.tick(120000);
+      assert.equal(subscriptions, initialSubscriptions);
+      assert.equal(unsubscriptions, 0);
+      assert.equal(messages, initialMessages, 'silence must not publish cached inputs');
+      let status;
+      routes['/api/status']({}, { json: value => { status = value; } });
+      for (const id of ['heading.angle', 'attitude.smoothed', 'groundSpeed.smoothed', 'boatSpeed.smoothed']) {
+        const warning = status.lifecycleWarnings.find(w => w.id === id);
+        assert.equal(warning?.status, 'idle', id);
+        assert.doesNotMatch(warning.message, /resubscrib/i);
+      }
+      deliverHeading(1.1);
+      routes['/api/status']({}, { json: value => { status = value; } });
+      assert.equal(status.lifecycleWarnings.some(w => w.id === 'heading.angle'), false);
+      assert.equal(subscriptions, initialSubscriptions);
+    } finally {
+      await plugin.stop();
       cleanup();
     }
   });
