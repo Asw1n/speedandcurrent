@@ -1,6 +1,6 @@
 {
   "name": "speedandcurrent",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "description": "A plugin that automatically corrects boat speed and calculates current and leeway using sensor fusion.",
   "main": "index.js",
   "scripts": {
@@ -44,6 +44,7 @@
     "signalkutilities": "^3.2.0"
   },
   "files": [
+    "CHANGELOG.md",
     "icon.png",
     "index.js",
     "correctionTable.js",

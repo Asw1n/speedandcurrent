@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
-## Unreleased
+## [2.5.0] - 2026-10-26
 
 ### Added
 - Correction-table files now use version 2 with per-cell update timestamps, capped time-based aging, and silent migration of existing version-1 files.
@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The correction table now overlays the current uncorrected (raw) and corrected speed/heel as red and blue dots positioned directly on the grid, with a matching legend entry.
 
 ### Changed
+- The npm package now includes this changelog.
 - Updated the `signalkutilities` dependency to `^3.2.0`, including non-finite sample protection, explicit-null smoother resets, and subscription-manager-controlled startup values.
 - Requires signalk-server >=2.35.0 for the upstream metadata-first subscription fix ([SignalK/signalk-server#3216](https://github.com/SignalK/signalk-server/pull/3216)).
 - Read-only Signal K users can now access live reports, status, and metadata; settings and correction-table listing or changes remain administrator-only.
