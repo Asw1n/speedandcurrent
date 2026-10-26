@@ -443,7 +443,7 @@ module.exports = function (app) {
     app.debug('registerWithRouter');
     readOptions(); // pre-load so /api/settings works before start()
 
-    router.get('/api/report', (req, res) => {
+    router.access('readonly').get('/api/report', (req, res) => {
       if (!isRunning) {
         res.status(503).json({ error: "Plugin is not running" });
       } else {
@@ -457,7 +457,7 @@ module.exports = function (app) {
       }
     });
 
-    router.get('/api/meta', (req, res) => {
+    router.access('readonly').get('/api/meta', (req, res) => {
       if (!isRunning) {
         res.status(503).json({ error: "Plugin is not running" });
       } else {
@@ -467,7 +467,7 @@ module.exports = function (app) {
 
 
 
-    router.get('/api/status', (req, res) => {
+    router.access('readonly').get('/api/status', (req, res) => {
       res.json({ status: pluginStatus, isRunning, lifecycleWarnings, learningState: getLearningStatePayload() });
     });
 

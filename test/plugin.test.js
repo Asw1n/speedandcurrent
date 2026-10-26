@@ -7,6 +7,47 @@ const os = require('os');
 const path = require('path');
 const { State } = require('kalman-filter');
 const { CorrectionTable, CorrectionEstimator, MAX_AGING_SECONDS, MIN_CELL_INDEX, DEFAULT_PROCESS_NOISE_RATE } = require('../correctionTable.js');
+const pluginFactory = require('../index.js');
+
+function withRoutePolicies(router) {
+  if (router.routePolicies instanceof Map) return router;
+
+  const policies = new Map();
+  const methods = ['get', 'post', 'put', 'patch', 'delete'];
+  const originalMethods = new Map();
+  for (const method of methods) {
+    if (typeof router[method] !== 'function') continue;
+    const original = router[method];
+    originalMethods.set(method, original);
+    router[method] = (route, ...handlers) => {
+      policies.set(`${method.toUpperCase()} ${route}`, 'admin');
+      return original.call(router, route, ...handlers);
+    };
+  }
+
+  router.access = (level) => {
+    if (level !== 'readonly' && level !== 'readwrite') {
+      throw new Error(`Unsupported route access level: ${level}`);
+    }
+    const scopedRouter = {};
+    for (const [method, original] of originalMethods) {
+      scopedRouter[method] = (route, ...handlers) => {
+        policies.set(`${method.toUpperCase()} ${route}`, level);
+        return original.call(router, route, ...handlers);
+      };
+    }
+    return scopedRouter;
+  };
+  router.routePolicies = policies;
+  return router;
+}
+
+function createTestPlugin(app) {
+  const plugin = pluginFactory(app);
+  const registerWithRouter = plugin.registerWithRouter;
+  plugin.registerWithRouter = (router) => registerWithRouter(withRoutePolicies(router));
+  return plugin;
+}
 
 // ---------------------------------------------------------------------------
 // App shim helpers
@@ -543,7 +584,7 @@ describe('plugin object shape', () => {
   before(() => {
     const shim = createAppShim();
     cleanup = shim.cleanup;
-    plugin = require('../index.js')(shim.app);
+    plugin = createTestPlugin(shim.app);
   });
 
   after(() => cleanup());
@@ -583,7 +624,7 @@ describe('registerWithRouter', () => {
   it('registers the expected routes', () => {
     const { app, cleanup } = createAppShim();
     try {
-      const plugin = require('../index.js')(app);
+      const plugin = createTestPlugin(app);
       const registered = [];
       const mockRouter = {
         get:  (p) => registered.push(`GET ${p}`),
@@ -607,10 +648,38 @@ describe('registerWithRouter', () => {
     }
   });
 
+  it('applies readonly access only to report, metadata, and status routes', () => {
+    const { app, cleanup } = createAppShim();
+    try {
+      const plugin = createTestPlugin(app);
+      const router = {
+        get: () => {},
+        put: () => {},
+        post: () => {},
+      };
+      plugin.registerWithRouter(router);
+
+      assert.deepStrictEqual(Object.fromEntries(router.routePolicies), {
+        'GET /api/report': 'readonly',
+        'GET /api/meta': 'readonly',
+        'GET /api/status': 'readonly',
+        'GET /api/settings': 'admin',
+        'PUT /api/settings': 'admin',
+        'GET /api/tables': 'admin',
+        'POST /api/tables/create': 'admin',
+        'POST /api/tables/load': 'admin',
+        'POST /api/tables/copy': 'admin',
+        'POST /api/tables/resize': 'admin',
+      });
+    } finally {
+      cleanup();
+    }
+  });
+
   it('GET /api/settings returns options with expected default keys', () => {
     const { app, cleanup } = createAppShim();
     try {
-      const plugin = require('../index.js')(app);
+      const plugin = createTestPlugin(app);
       const routes = {};
       const mockRouter = {
         get:  (p, h) => { routes[`GET ${p}`]  = h; },
@@ -642,7 +711,7 @@ describe('registerWithRouter', () => {
   it('PUT /api/settings rejects blocked key "tableName" with 400', () => {
     const { app, cleanup } = createAppShim();
     try {
-      const plugin = require('../index.js')(app);
+      const plugin = createTestPlugin(app);
       const routes = {};
       const mockRouter = {
         get:  (p, h) => { routes[`GET ${p}`]  = h; },
@@ -669,7 +738,7 @@ describe('registerWithRouter', () => {
   it('PUT /api/settings rejects blocked key "correctionTable" with 400', () => {
     const { app, cleanup } = createAppShim();
     try {
-      const plugin = require('../index.js')(app);
+      const plugin = createTestPlugin(app);
       const routes = {};
       const mockRouter = {
         get:  (p, h) => { routes[`GET ${p}`]  = h; },
@@ -696,7 +765,7 @@ describe('registerWithRouter', () => {
   it('PUT /api/settings accepts valid settings and reflects them back', () => {
     const { app, cleanup } = createAppShim();
     try {
-      const plugin = require('../index.js')(app);
+      const plugin = createTestPlugin(app);
       const routes = {};
       const mockRouter = {
         get:  (p, h) => { routes[`GET ${p}`]  = h; },
@@ -721,7 +790,7 @@ describe('registerWithRouter', () => {
     let plugin;
     try {
       app.savePluginOptions({ assumeCurrent: true, configVersion: 4 });
-      plugin = require('../index.js')(app);
+      plugin = createTestPlugin(app);
       plugin.start();
 
       assert.strictEqual('assumeCurrent' in app.readPluginOptions(), false);
@@ -736,7 +805,7 @@ describe('registerWithRouter', () => {
     let plugin;
     try {
       app.savePluginOptions({ tableName: 'correctionTable' });
-      plugin = require('../index.js')(app);
+      plugin = createTestPlugin(app);
       plugin.start();
       fs.writeFileSync(
         path.join(app.getDataDirPath(), 'broken.json'),
@@ -771,7 +840,7 @@ describe('registerWithRouter', () => {
   it('GET /api/status returns isRunning and status fields', () => {
     const { app, cleanup } = createAppShim();
     try {
-      const plugin = require('../index.js')(app);
+      const plugin = createTestPlugin(app);
       const routes = {};
       const mockRouter = {
         get:  (p, h) => { routes[`GET ${p}`]  = h; },
@@ -1007,7 +1076,7 @@ describe('attitude guard clauses (missing spec sub-property)', () => {
     let shiftMs = 0;
     Date.now = () => realDateNow() + shiftMs;
     try {
-      plugin = require('../index.js')(app);
+      plugin = createTestPlugin(app);
       plugin.start();
       shiftMs = 61_000;
 
@@ -1053,7 +1122,7 @@ describe('plugin lifecycle', () => {
     app.handleMessage = (...args) => messages.push(args);
     let plugin;
     try {
-      plugin = require('../index.js')(app);
+      plugin = createTestPlugin(app);
       plugin.start();
 
       const currentValues = messages.flatMap(([, message]) =>
@@ -1071,7 +1140,7 @@ describe('plugin lifecycle', () => {
     const { app, cleanup } = createAppShim();
     let plugin;
     try {
-      plugin = require('../index.js')(app);
+      plugin = createTestPlugin(app);
       assert.doesNotThrow(() => plugin.start(), 'plugin.start() must not throw');
     } finally {
       if (plugin) plugin.stop();
@@ -1089,7 +1158,7 @@ describe('plugin lifecycle', () => {
         JSON.stringify({ row: {}, col: {}, table: [null] })
       );
 
-      plugin = require('../index.js')(app);
+      plugin = createTestPlugin(app);
       assert.doesNotThrow(() => plugin.start(), 'plugin.start() must recover from malformed table data');
 
       const recoveryName = `correctionTable-${new Date().toISOString().slice(0, 10)}`;
@@ -1117,7 +1186,7 @@ describe('plugin lifecycle', () => {
   it('stop() resolves cleanly after start()', async () => {
     const { app, cleanup } = createAppShim();
     try {
-      const plugin = require('../index.js')(app);
+      const plugin = createTestPlugin(app);
       plugin.start();
       await assert.doesNotReject(
         () => plugin.stop(),
@@ -1131,7 +1200,7 @@ describe('plugin lifecycle', () => {
   it('can be restarted (start → stop → start → stop)', async () => {
     const { app, cleanup } = createAppShim();
     try {
-      const plugin = require('../index.js')(app);
+      const plugin = createTestPlugin(app);
       plugin.start();
       await plugin.stop();
       assert.doesNotThrow(() => plugin.start(), 'second start() must not throw');
@@ -1166,7 +1235,7 @@ describe('plugin lifecycle', () => {
     });
 
     try {
-      const plugin = require('../index.js')(app);
+      const plugin = createTestPlugin(app);
       assert.doesNotThrow(() => plugin.start(), 'first start() must not throw');
       await plugin.stop();
       assert.doesNotThrow(() => plugin.start(), 'second start() must not throw');
@@ -1179,7 +1248,7 @@ describe('plugin lifecycle', () => {
   it('GET /api/status reports isRunning=true after start()', async () => {
     const { app, cleanup } = createAppShim();
     try {
-      const plugin = require('../index.js')(app);
+      const plugin = createTestPlugin(app);
       const routes = {};
       const mockRouter = {
         get:  (p, h) => { routes[`GET ${p}`]  = h; },
@@ -1220,7 +1289,7 @@ describe('input silence without recovery resubscriptions', () => {
         for (const { path } of msg.subscribe) subscribers.get(path).delete(callback);
       });
     };
-    const plugin = require('../index.js')(app);
+    const plugin = createTestPlugin(app);
     try {
       const routes = {};
       plugin.registerWithRouter({

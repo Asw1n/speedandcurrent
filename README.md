@@ -33,6 +33,12 @@ The plugin requires no further configuration in the Signal K admin UI. All setti
 
 ---
 
+## HTTP endpoint access
+
+Signal K read-only users can access the live report (`/api/report`), metadata (`/api/meta`), and status (`/api/status`) endpoints. Settings (`/api/settings`) and correction-table listing or management (`/api/tables...`) require administrator access. Anonymous requests still follow the server's configured security policy; this plugin does not enable anonymous access.
+
+---
+
 ## Configuring Signal K source priorities
 
 Signal K Server manages source priorities natively. When multiple devices publish the same path, the server delivers the highest-priority source to all subscribers — including this plugin. No per-path source selection is needed inside the plugin itself.

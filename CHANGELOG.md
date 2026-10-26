@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 - Requires signalk-server >=2.35.0 for the upstream metadata-first subscription fix ([SignalK/signalk-server#3216](https://github.com/SignalK/signalk-server/pull/3216)).
+- Read-only Signal K users can now access live reports, status, and metadata; settings and correction-table listing or changes remain administrator-only.
 - Correction-table learning no longer incorporates the estimated current, and the related setting has been removed.
 - Correction-table process noise is now configured as a user-facing correction drift rate in knots/month, with a conservative default of 0.3 and an SI conversion internally. Legacy stability settings migrate silently.
 - Correction interpolation now includes mature cells within 2.5 normalized grid-cell units.
