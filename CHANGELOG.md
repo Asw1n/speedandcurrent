@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
+## [Unreleased]
+
+### Added
+- Current estimates are also published as an `environment.current` object, with magnetic set calculated from `navigation.magneticVariation` and published at `environment.current.setMagnetic`.
+- The webapp now shows magnetic variation as an estimation input and magnetic current set as an output.
+
+### Fixed
+- Magnetic variation is no longer marked idle or stale, since it may update too infrequently for telemetry staleness checks.
+
 ## [2.5.0] - 2026-10-26
 
 ### Added

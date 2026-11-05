@@ -1113,6 +1113,55 @@ describe('attitude guard clauses (missing spec sub-property)', () => {
       cleanup();
     }
   });
+
+  it('publishes the current object and magnetic set when magnetic variation is available', () => {
+    const { app, cleanup, subscribers } = createDeliveringShim({ estimateBoatSpeed: true });
+    const messages = [];
+    app.handleMessage = (...args) => messages.push(args);
+    let plugin;
+    const realDateNow = Date.now.bind(Date);
+    let shiftMs = 0;
+    Date.now = () => realDateNow() + shiftMs;
+    try {
+      plugin = createTestPlugin(app);
+      plugin.start();
+      shiftMs = 61_000;
+
+      const routes = {};
+      plugin.registerWithRouter({
+        get: (route, handler) => { routes[`GET ${route}`] = handler; },
+        put: () => {},
+        post: () => {}
+      });
+
+      deliverDelta(subscribers, [{ path: 'navigation.magneticVariation', value: 0.2 }]);
+      deliverDelta(subscribers, [{ path: 'navigation.attitude', value: { roll: 0 } }]);
+      deliverDelta(subscribers, [{ path: 'navigation.headingTrue', value: 1.0 }]);
+      deliverDelta(subscribers, [{ path: 'navigation.speedOverGround', value: 3.0 }]);
+      deliverDelta(subscribers, [{ path: 'navigation.courseOverGroundTrue', value: 0.5 }]);
+      deliverDelta(subscribers, [{ path: 'navigation.speedThroughWater', value: 2.0 }]);
+
+      let report;
+      routes['GET /api/report']({}, { json: data => { report = data; } });
+      const currentPolar = report.polars['current.smoothed'];
+      const expectedSetMagnetic = ((currentPolar.angle - 0.2) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
+      const values = messages.flatMap(([, message]) =>
+        (message?.updates || []).flatMap(update => update.values || [])
+      );
+      const currentObject = values.find(({ path }) => path === 'environment.current');
+      const magneticOutput = values.findLast(({ path }) => path === 'environment.current.setMagnetic');
+
+      assert.strictEqual(report.deltas.magneticVariation.value, 0.2);
+      assert.ok(currentObject, 'expected an environment.current object output');
+      assert.ok(Math.abs(currentObject.value.setMagnetic - expectedSetMagnetic) < 1e-10);
+      assert.ok(Math.abs(magneticOutput.value - expectedSetMagnetic) < 1e-10);
+      assert.ok(Math.abs(report.deltas.setMagnetic.value - expectedSetMagnetic) < 1e-10);
+    } finally {
+      Date.now = realDateNow;
+      if (plugin) plugin.stop();
+      cleanup();
+    }
+  });
 });
 
 describe('plugin lifecycle', () => {
@@ -1127,7 +1176,10 @@ describe('plugin lifecycle', () => {
 
       const currentValues = messages.flatMap(([, message]) =>
         (message?.updates || []).flatMap(update => update.values || [])
-      ).filter(({ path }) => path === 'environment.current.drift' || path === 'environment.current.setTrue');
+      ).filter(({ path }) => path === 'environment.current'
+        || path === 'environment.current.drift'
+        || path === 'environment.current.setTrue'
+        || path === 'environment.current.setMagnetic');
 
       assert.deepStrictEqual(currentValues, [], 'disabled estimation must not publish current');
     } finally {

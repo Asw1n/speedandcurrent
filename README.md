@@ -62,6 +62,7 @@ Once configured, all consumers on the Signal K bus — KIP, OpenCPN, Instrument 
 | `navigation.courseOverGroundTrue` | GPS ground speed direction |
 | `navigation.headingTrue` | True heading — used to rotate the boat-frame correction into the ground frame |
 | `navigation.attitude` | Roll angle — provides the heel index into the correction table |
+| `navigation.magneticVariation` | Magnetic variation — used to convert estimated current set to magnetic north |
 
 ---
 
@@ -73,6 +74,8 @@ Once configured, all consumers on the Signal K bus — KIP, OpenCPN, Instrument 
 | `navigation.leewayAngle` | rad | Leeway angle (starboard positive). Derived from the lateral correction component. |
 | `environment.current.drift` | m/s | Estimated current speed. |
 | `environment.current.setTrue` | rad | Estimated current direction (the direction the water moves *toward*). |
+| `environment.current.setMagnetic` | rad | Estimated current direction relative to magnetic north, calculated from `environment.current.setTrue` and `navigation.magneticVariation`. |
+| `environment.current` | object | Current estimate containing `drift`, `setTrue`, and, when magnetic variation is available, `setMagnetic`. |
 
 A 60-second stabilisation period applies after startup. Corrected boatspeed may be published during this window, but current estimation and table learning wait until it ends.
 
@@ -107,6 +110,7 @@ The **Inputs** section shows live readings from the raw sensors as they arrive f
 | Boat speed | `navigation.speedThroughWater` |
 | Ground speed | `navigation.speedOverGround` + `navigation.courseOverGroundTrue` |
 | Attitude (heel) | `navigation.attitude` (roll) |
+| Magnetic variation | `navigation.magneticVariation` |
 
 ### Settings
 
@@ -124,7 +128,7 @@ The **Boatspeed Estimation** section is enabled with the toggle in the panel hea
 
 The panel is organised into three groups:
 
-**Inputs** — the raw sensor values used for correction: heading, boat speed, ground speed, and attitude. Warnings appear here if any are unavailable.
+**Inputs** — the raw signals used by the estimation calculations: heading, boat speed, ground speed, attitude, and magnetic variation. Warnings appear here if any are unavailable.
 
 **Intermediates** — computed vectors that give insight into what the plugin is doing:
 - *Speed correction* — the correction vector currently being applied (longitudinal + lateral components).
@@ -134,6 +138,7 @@ The panel is organised into three groups:
 **Outputs** — what is being published to Signal K:
 - *Corrected boatspeed / Leeway* — corrected STW magnitude and leeway angle.
 - *Current* — estimated current drift and set.
+- *Magnetic set* — estimated current direction relative to magnetic north, calculated using magnetic variation.
 
 ### Settings
 

@@ -118,7 +118,7 @@ async function loadMeta() {
 
 const computedItemIds = new Set([
   'current.smoothed', 'boatSpeedRefGround', 'speedCorrection',
-  'correctedBoatSpeed', 'residual', 'residual.smoothed'
+  'correctedBoatSpeed', 'residual', 'residual.smoothed', 'setMagnetic'
 ]);
 
 function getPathStatus(pathState, hasValue, computed = false, computedReady = false) {
@@ -564,6 +564,8 @@ function renderLiveSections() {
   const inputAttitudes = filterById(state.attitudesAll, ['attitude']);
   const fallbackInputPolars = inputPolars.length ? inputPolars : filterById(state.polarsAll, ['groundSpeed.smoothed']);
   const fallbackInputDeltas = inputDeltas.length ? inputDeltas : filterById(state.deltasAll, ['heading.smoothed', 'boatSpeed.smoothed']);
+  const magneticVariationInput = filterById(state.deltasAll, ['magneticVariation']);
+  fallbackInputDeltas.push(...magneticVariationInput);
   const fallbackInputAttitudes = inputAttitudes.length ? inputAttitudes : filterById(state.attitudesAll, ['attitude.smoothed']);
   const displayedInputs = [...fallbackInputPolars, ...fallbackInputDeltas, ...fallbackInputAttitudes];
 
@@ -584,7 +586,7 @@ function renderLiveSections() {
     ? [...groundSpeedInputs, ...boatSpeedInputs]
     : [...boatSpeedInputs, ...groundSpeedInputs];
   estimationInputs.push(
-    ...filterById(state.deltasAll, ['heading.angle']),
+    ...filterById(state.deltasAll, ['heading.angle', 'magneticVariation']),
     ...filterById(state.attitudesAll, ['attitude'])
   );
   renderItemsInto('estimation-inputs', estimationInputs);
@@ -599,9 +601,10 @@ function renderLiveSections() {
   renderGroupInto('estimation-intermediates', estimationIntermediates, [], [], statisticRows);
   // Estimation — outputs
   const estimationOutputs = filterById(state.polarsAll, ['correctedBoatSpeed', 'current.smoothed']);
-  renderGroupInto('estimation-outputs', estimationOutputs, [], []);
+  const estimationOutputDeltas = filterById(state.deltasAll, ['setMagnetic']);
+  renderGroupInto('estimation-outputs', estimationOutputs, estimationOutputDeltas, []);
   // Estimation — warnings
-  renderWarnings('estimation-warnings', [...estimationInputs, ...estimationIntermediates, ...estimationOutputs]);
+  renderWarnings('estimation-warnings', [...estimationInputs, ...estimationIntermediates, ...estimationOutputs, ...estimationOutputDeltas]);
 
   // Learning — inputs
   const learningPolars = filterById(state.polarsAll, ['groundSpeed.smoothed']);

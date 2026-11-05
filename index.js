@@ -295,6 +295,9 @@ module.exports = function (app) {
   let smoothedAttitude = null;
   let rawCurrent = null;
   let smoothedCurrent = null;
+  let magneticVariationHandler = null;
+  let setMagneticHandler = null;
+  let setMagneticPublished = false;
   let smoothedBoatSpeed = null;
   let correctedBoatSpeed = null;
   let lrnBoatSpeed = null;
@@ -684,6 +687,25 @@ module.exports = function (app) {
     // send metadata for current
     MessageHandler.setMeta(app, plugin.id, "environment.current.drift", {units: "m/s", type: "number", description: "Speed of the current"});
     MessageHandler.setMeta(app, plugin.id, "environment.current.setTrue", { units: "rad", type: "number", description: "Direction of the current" });
+    MessageHandler.setMeta(app, plugin.id, "environment.current", { type: "object", description: "Estimated water current" });
+    MessageHandler.setMeta(app, plugin.id, "environment.current.setMagnetic", {
+      units: "rad",
+      type: "number",
+      description: "Direction of the current relative to magnetic north",
+      displayName: "Magnetic set",
+      displayUnits: { category: "angle" }
+    });
+    magneticVariationHandler = new MessageHandler(app, plugin.id, "magneticVariation");
+    magneticVariationHandler.configure("navigation.magneticVariation");
+    magneticVariationHandler.idlePeriod = 0;
+    magneticVariationHandler.stalePeriod = 0;
+    magneticVariationHandler.onDelta = () => {
+      clearLifecycleWarning("magneticVariation");
+      publishCurrentObject();
+    };
+    magneticVariationHandler.subscribe();
+    setMagneticHandler = new MessageHandler(app, plugin.id, "setMagnetic");
+    setMagneticHandler.configure("environment.current.setMagnetic");
     rawCurrent = new Polar(app, plugin.id, "current");
     rawCurrent.configureMagnitude("environment.current.drift");
     rawCurrent.configureAngle("environment.current.setTrue");
@@ -843,6 +865,8 @@ module.exports = function (app) {
       reportFull.addPolar(residual);
       reportFull.addPolar(smoothedResidual);
     }
+    reportFull.addDelta(magneticVariationHandler);
+    reportFull.addDelta(setMagneticHandler);
     // Smoothed learning inputs are always subscribed regardless of updateCorrectionTable,
     // so always add them to the report — otherwise warnings never clear when
     // learning was disabled at startup and later toggled on.
@@ -874,12 +898,14 @@ module.exports = function (app) {
         }
         // Clear all active output paths from the SK bus before teardown.
         if (smoothedCurrent) PolarSmoother.clear(app, plugin.id, [smoothedCurrent]);
+        clearCurrentObjectOutputs();
         if (options.estimateBoatSpeed && correctedBoatSpeed) Polar.clear(app, plugin.id, [correctedBoatSpeed]);
         smoothedHeading = smoothedHeading?.terminate();
         smoothedAttitude = smoothedAttitude?.terminate();
         rawCurrent = rawCurrent?.terminate();
         smoothedCurrent = smoothedCurrent?.terminate?.();
         navigationStateHandler = navigationStateHandler?.terminate();
+        magneticVariationHandler = magneticVariationHandler?.terminate();
         smoothedBoatSpeed = smoothedBoatSpeed?.terminate();
         correctedBoatSpeed = correctedBoatSpeed?.terminate();
         lrnBoatSpeed = lrnBoatSpeed?.terminate();
@@ -895,6 +921,8 @@ module.exports = function (app) {
         noCurrent = null;
         rawBoatSpeed = null;
         rawGroundSpeed = null;
+        setMagneticHandler = null;
+        setMagneticPublished = false;
         lastNavigationStateValue = null;
         learningStabilizingUntil = 0;
         learningStabilizingReason = 'startup';
@@ -986,8 +1014,48 @@ module.exports = function (app) {
     }
 
     PolarSmoother.send(app, plugin.id, [smoothedCurrent]);
+    publishCurrentObject();
 
     Polar.send(app, plugin.id, [correctedBoatSpeed]);
+  }
+
+  function publishCurrentObject() {
+    if (!options.estimateBoatSpeed || !smoothedCurrent?.ready) return;
+    const drift = smoothedCurrent.magnitude;
+    const setTrue = smoothedCurrent.angle;
+    if (!Number.isFinite(drift) || !Number.isFinite(setTrue)) return;
+
+    const current = { drift, setTrue };
+    const values = [{ path: "environment.current", value: current }];
+    const magneticVariation = magneticVariationHandler?.value;
+    if (magneticVariationHandler?.ready && Number.isFinite(magneticVariation)) {
+      const setMagnetic = ((setTrue - magneticVariation) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
+      current.setMagnetic = setMagnetic;
+      setMagneticHandler.value = setMagnetic;
+      values.push({ path: "environment.current.setMagnetic", value: setMagnetic });
+      setMagneticPublished = true;
+    } else {
+      setMagneticHandler.invalidate();
+      if (setMagneticPublished) {
+        values.push({ path: "environment.current.setMagnetic", value: null });
+      }
+      setMagneticPublished = false;
+    }
+
+    app.handleMessage(plugin.id, { updates: [{ values }] });
+  }
+
+  function clearCurrentObjectOutputs() {
+    setMagneticHandler?.invalidate();
+    setMagneticPublished = false;
+    app.handleMessage(plugin.id, {
+      updates: [{
+        values: [
+          { path: "environment.current", value: null },
+          { path: "environment.current.setMagnetic", value: null }
+        ]
+      }]
+    });
   }
 
   /**
@@ -1188,6 +1256,7 @@ module.exports = function (app) {
       if (key === 'estimateBoatSpeed' && !value && correctedBoatSpeed) {
         Polar.clear(app, plugin.id, [correctedBoatSpeed]);
         PolarSmoother.clear(app, plugin.id, [smoothedCurrent]);
+        clearCurrentObjectOutputs();
       }
 
       delete changedOptions[key];
