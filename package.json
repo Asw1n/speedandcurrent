@@ -47,6 +47,7 @@
     "CHANGELOG.md",
     "icon.png",
     "index.js",
+    "attitude.js",
     "correctionTable.js",
     "public/",
     "docs/"

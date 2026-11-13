@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
+## Unreleased
+
+### Added
+- Roll input now prefers `navigation.attitude.roll`, with automatic fallback to the legacy attitude object after 60 seconds of silence and automatic recovery when individual roll data returns.
+- Attitude reports identify the selected input path, and debug logging shows initial preference and source changes.
+
 ## [2.6.0] - 2026-11-05
 
 ### Added

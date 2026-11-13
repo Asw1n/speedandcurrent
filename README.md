@@ -61,8 +61,19 @@ Once configured, all consumers on the Signal K bus — KIP, OpenCPN, Instrument 
 | `navigation.speedOverGround` | GPS ground speed magnitude |
 | `navigation.courseOverGroundTrue` | GPS ground speed direction |
 | `navigation.headingTrue` | True heading — used to rotate the boat-frame correction into the ground frame |
-| `navigation.attitude` | Roll angle — provides the heel index into the correction table |
+| `navigation.attitude.roll` | Preferred roll angle — provides the heel index into the correction table |
+| `navigation.attitude` | Legacy attitude object — used for roll after the individual path is idle for 60 seconds |
 | `navigation.magneticVariation` | Magnetic variation — used to convert estimated current set to magnetic north |
+
+Attitude handling is isolated in `attitude.js`. Only roll is needed; pitch and yaw
+are not subscribed to. When the individual roll path is idle for 60 seconds
+(including after startup without data), the plugin subscribes to the legacy
+object. Stale roll values are not used while waiting. Valid individual roll data
+immediately takes preference again and removes the legacy subscription.
+Correction lookup continues to use raw roll; learning uses smoothed roll with
+the existing smoothing window. Reports retain their object-shaped roll values
+and identify `selectedPath` and `legacyFallback` in their state. Debug messages
+show the initial preference and source changes without logging every sample.
 
 ---
 
