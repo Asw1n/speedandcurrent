@@ -8,6 +8,8 @@ const path = require('path');
 const { State } = require('kalman-filter');
 const { CorrectionTable, CorrectionEstimator, MAX_AGING_SECONDS, MIN_CELL_INDEX, DEFAULT_PROCESS_NOISE_RATE } = require('../correctionTable.js');
 const pluginFactory = require('../index.js');
+const { AttitudeInput } = require('../attitude');
+const { MovingAverageSmoother } = require('signalkutilities');
 
 function withRoutePolicies(router) {
   if (router.routePolicies instanceof Map) return router;
@@ -1020,6 +1022,177 @@ describe('leeway gate', () => {
   });
 });
 
+describe('attitude source selection', () => {
+  function fixture({ bootstrap = {} } = {}) {
+    const { app, cleanup } = createAppShim();
+    const subscribers = new Map();
+    const messages = [];
+    const events = [];
+    app.debug = message => messages.push(message);
+    app.subscriptionmanager.subscribe = (msg, unsubscribes, _err, callback) => {
+      for (const { path } of msg.subscribe) {
+        if (!subscribers.has(path)) subscribers.set(path, new Set());
+        subscribers.get(path).add(callback);
+      }
+      unsubscribes.push(() => {
+        for (const { path } of msg.subscribe) subscribers.get(path).delete(callback);
+      });
+      for (const { path } of msg.subscribe) {
+        if (Object.hasOwn(bootstrap, path)) {
+          callback({ updates: [{ values: [{ path, value: bootstrap[path] }] }] });
+        }
+      }
+    };
+    const input = new AttitudeInput({
+      app, pluginId: 'SpeedAndCurrent', SmootherClass: MovingAverageSmoother,
+      smootherOptions: { timeSpan: 5 },
+      onDelta: () => events.push('delta'),
+      onStale: () => events.push('stale'),
+      onIdle: () => events.push('idle')
+    });
+    const sample = (path, value) => {
+      for (const callback of [...(subscribers.get(path) || [])]) {
+        callback({ updates: [{ values: [{ path, value }] }] });
+      }
+    };
+    return { input, subscribers, messages, events, sample, cleanup };
+  }
+
+  it('prefers only roll and preserves distinct raw and smoothed values', t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
+    const { input, subscribers, sample, messages, cleanup } = fixture();
+    try {
+      assert.equal(subscribers.size, 0);
+      input.subscribe();
+      input.subscribe();
+      assert.deepEqual([...subscribers.keys()], ['navigation.attitude.roll']);
+      assert.equal(subscribers.get('navigation.attitude.roll').size, 1);
+      assert.match(messages.find(message => message.startsWith('[SpeedAndCurrent] attitude')), /preferring individual path/);
+      sample('navigation.attitude.roll', 0.1);
+      t.mock.timers.tick(100);
+      sample('navigation.attitude.roll', 0.3);
+      assert.equal(input.raw.value.roll, 0.3);
+      assert.ok(Math.abs(input.value.roll - 0.2) < 1e-12);
+      assert.equal(input.report().id, 'attitude.smoothed');
+      assert.equal(input.raw.report().id, 'attitude');
+      assert.equal(input.raw.state.selectedPath, 'navigation.attitude.roll');
+      assert.equal(input.state.legacyFallback, false);
+      assert.equal(input.meta.units, input.raw.meta.units);
+      const count = messages.filter(message => message.includes('attitude roll source:')).length;
+      sample('navigation.attitude.roll', 0.2);
+      assert.equal(messages.filter(message => message.includes('attitude roll source:')).length, count);
+      for (let i = 0; i < 65; i++) {
+        t.mock.timers.tick(1000);
+        sample('navigation.attitude.roll', 0.2);
+      }
+      assert.equal(subscribers.has('navigation.attitude'), false);
+      input.configureSmoother(MovingAverageSmoother, { timeSpan: 10 });
+      assert.equal(input.meta.smoother.timeSpan, 10);
+      assert.equal(input.raw.value.roll, 0.2);
+      assert.equal(input.value.roll, 0.2);
+    } finally {
+      input.terminate();
+      cleanup();
+    }
+  });
+
+  it('waits exactly until idle before legacy fallback and logs immediate primary recovery', t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
+    const { input, subscribers, sample, messages, events, cleanup } = fixture();
+    try {
+      input.subscribe();
+      sample('navigation.attitude.roll', 0.1);
+      t.mock.timers.tick(4001);
+      assert.equal(input.raw.ready, false);
+      assert.equal(input.ready, false);
+      assert.equal(subscribers.has('navigation.attitude'), false);
+      assert.ok(events.includes('stale'));
+      t.mock.timers.tick(55998);
+      assert.equal(subscribers.has('navigation.attitude'), false);
+      t.mock.timers.tick(1);
+      assert.equal(subscribers.get('navigation.attitude').size, 1);
+      sample('navigation.attitude', { roll: 1, pitch: 2, yaw: 3 });
+      t.mock.timers.tick(100);
+      sample('navigation.attitude', { roll: 2 });
+      assert.deepEqual(input.raw.value, { roll: 2 });
+      assert.deepEqual(input.value, { roll: 1.5 });
+      assert.equal(input.state.selectedPath, 'navigation.attitude');
+      assert.equal(input.state.legacyFallback, true);
+      assert.ok(messages.includes('[SpeedAndCurrent] attitude roll source: legacy object navigation.attitude'));
+      input.configureSmoother(MovingAverageSmoother, { timeSpan: 10 });
+      assert.deepEqual(input.value, { roll: 2 });
+      sample('navigation.attitude.roll', 0.3);
+      assert.deepEqual(input.value, { roll: 0.3 });
+      assert.equal(input.state.selectedPath, 'navigation.attitude.roll');
+      assert.equal(subscribers.get('navigation.attitude').size, 0);
+      assert.equal(messages.filter(message => message.includes('attitude roll source:')).at(-1),
+        '[SpeedAndCurrent] attitude roll source: individual path navigation.attitude.roll');
+      const count = events.length;
+      sample('navigation.attitude', { roll: 3 });
+      assert.equal(events.length, count);
+      t.mock.timers.tick(60000);
+      assert.equal(subscribers.get('navigation.attitude').size, 1, 'subsequent idle must reactivate fallback');
+    } finally {
+      input.terminate();
+      cleanup();
+    }
+  });
+
+  it('handles synchronous cached primary and legacy data and cleans up all subscriptions and timers', t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
+    const { input, subscribers, events, cleanup } = fixture({
+      bootstrap: { 'navigation.attitude.roll': 0.1, 'navigation.attitude': { roll: 0.2 } }
+    });
+    try {
+      input.subscribe();
+      assert.deepEqual(input.value, { roll: 0.1 });
+      t.mock.timers.tick(60000);
+      assert.deepEqual(input.value, { roll: 0.2 });
+      assert.equal(input.terminate(), null);
+      assert.equal(input.ready, false);
+      assert.equal(input.raw.ready, false);
+      for (const callbacks of subscribers.values()) assert.equal(callbacks.size, 0);
+      const count = events.length;
+      t.mock.timers.tick(120000);
+      assert.equal(events.length, count);
+    } finally {
+      input.terminate();
+      cleanup();
+    }
+  });
+
+  it('does not keep legacy roll fresh through pitch/yaw updates or use null/non-finite values', t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
+    const { input, sample, cleanup } = fixture();
+    try {
+      input.subscribe();
+      t.mock.timers.tick(60000);
+      sample('navigation.attitude', { roll: 0.1 });
+      for (let i = 0; i < 5; i++) {
+        t.mock.timers.tick(1000);
+        sample('navigation.attitude', { pitch: 1, yaw: 2 });
+      }
+      assert.equal(input.raw.ready, false);
+      assert.equal(input.ready, false);
+      assert.deepEqual(input.value, {});
+      sample('navigation.attitude', { roll: null });
+      assert.equal(input.ready, false);
+      sample('navigation.attitude.roll', null);
+      sample('navigation.attitude.roll', NaN);
+      sample('navigation.attitude.roll', Infinity);
+      assert.equal(input.ready, false);
+      sample('navigation.attitude.roll', 0);
+      assert.deepEqual(input.value, { roll: 0 });
+      sample('navigation.attitude.roll', null);
+      assert.equal(input.ready, false);
+      assert.equal(input.raw.ready, false);
+    } finally {
+      input.terminate();
+      cleanup();
+    }
+  });
+});
+
 describe('attitude guard clauses (missing spec sub-property)', () => {
   /**
    * App shim variant that tracks per-path subscribers so tests can push deltas,
@@ -1062,6 +1235,60 @@ describe('attitude guard clauses (missing spec sub-property)', () => {
       if (cbs) for (const cb of [...cbs]) cb(delta);
     }
   }
+
+  it('reports selected raw and smoothed roll through fallback, recovery and runtime window changes', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
+    const { app, cleanup, subscribers } = createDeliveringShim({ estimateBoatSpeed: true });
+    const plugin = createTestPlugin(app);
+    const routes = {};
+    plugin.registerWithRouter({
+      get: (p, handler) => { routes[`GET ${p}`] = handler; },
+      put: (p, handler) => { routes[`PUT ${p}`] = handler; },
+      post: () => {}
+    });
+    const call = (method, p, body) => {
+      let payload;
+      const response = {
+        json: value => { payload = value; },
+        status: () => response
+      };
+      routes[`${method} ${p}`]({ body }, response);
+      return payload;
+    };
+    const sample = (path, value) => deliverDelta(subscribers, [{ path, value }]);
+    try {
+      plugin.start();
+      assert.equal(subscribers.has('navigation.attitude'), false);
+      t.mock.timers.tick(60000);
+      sample('navigation.attitude', { roll: 0.1, pitch: 1 });
+      t.mock.timers.tick(100);
+      sample('navigation.attitude', { roll: 0.3 });
+      let report = call('GET', '/api/report');
+      assert.deepEqual(report.attitudes.attitude.value, { roll: 0.3 });
+      assert.ok(Math.abs(report.attitudes['attitude.smoothed'].value.roll - 0.2) < 1e-12);
+      assert.equal(report.attitudes.attitude.state.selectedPath, 'navigation.attitude');
+      assert.equal(report.attitudes['attitude.smoothed'].state.legacyFallback, true);
+
+      call('PUT', '/api/settings', { smootherTimeSpan: 10 });
+      sample('navigation.speedThroughWater', 0);
+      assert.equal(call('GET', '/api/meta').attitudes['attitude.smoothed'].smoother.timeSpan, 10);
+      sample('navigation.attitude.roll', 0.4);
+      report = call('GET', '/api/report');
+      assert.deepEqual(report.attitudes.attitude.value, { roll: 0.4 });
+      assert.deepEqual(report.attitudes['attitude.smoothed'].value, { roll: 0.4 });
+      assert.equal(report.attitudes.attitude.state.selectedPath, 'navigation.attitude.roll');
+      assert.equal(report.attitudes['attitude.smoothed'].state.legacyFallback, false);
+      assert.equal(subscribers.get('navigation.attitude').size, 0);
+      assert.equal(subscribers.has('navigation.attitude.pitch'), false);
+      assert.equal(subscribers.has('navigation.attitude.yaw'), false);
+      const status = call('GET', '/api/status');
+      assert.equal(status.lifecycleWarnings.some(w => w.id === 'attitude.smoothed'), false);
+    } finally {
+      await plugin.stop();
+      for (const callbacks of subscribers.values()) assert.equal(callbacks.size, 0);
+      cleanup();
+    }
+  });
 
   it('skips speed correction and rejects the learning observation when attitude.roll was never sampled', () => {
     const { app, cleanup, subscribers } = createDeliveringShim({
@@ -1135,7 +1362,7 @@ describe('attitude guard clauses (missing spec sub-property)', () => {
       });
 
       deliverDelta(subscribers, [{ path: 'navigation.magneticVariation', value: 0.2 }]);
-      deliverDelta(subscribers, [{ path: 'navigation.attitude', value: { roll: 0 } }]);
+      deliverDelta(subscribers, [{ path: 'navigation.attitude.roll', value: 0 }]);
       deliverDelta(subscribers, [{ path: 'navigation.headingTrue', value: 1.0 }]);
       deliverDelta(subscribers, [{ path: 'navigation.speedOverGround', value: 3.0 }]);
       deliverDelta(subscribers, [{ path: 'navigation.courseOverGroundTrue', value: 0.5 }]);
@@ -1357,7 +1584,7 @@ describe('input silence without recovery resubscriptions', () => {
       const initialSubscriptions = subscriptions;
       const initialMessages = messages;
       t.mock.timers.tick(120000);
-      assert.equal(subscriptions, initialSubscriptions);
+      assert.equal(subscriptions, initialSubscriptions + 1, 'idle roll activates one legacy subscription');
       assert.equal(unsubscriptions, 0);
       assert.equal(messages, initialMessages, 'silence must not publish cached inputs');
       let status;
@@ -1370,7 +1597,7 @@ describe('input silence without recovery resubscriptions', () => {
       deliverHeading(1.1);
       routes['/api/status']({}, { json: value => { status = value; } });
       assert.equal(status.lifecycleWarnings.some(w => w.id === 'heading.angle'), false);
-      assert.equal(subscriptions, initialSubscriptions);
+      assert.equal(subscriptions, initialSubscriptions + 1);
     } finally {
       await plugin.stop();
       cleanup();

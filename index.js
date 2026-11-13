@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs');
+const { AttitudeInput } = require('./attitude');
 
 const {
   SmoothedAngle,
@@ -657,19 +658,17 @@ module.exports = function (app) {
     rawHeading = smoothedHeading.handler;
 
     // attitude
-    smoothedAttitude = createSmoothedHandler({
+    smoothedAttitude = new AttitudeInput({
       app, pluginId: plugin.id,
-      id: 'attitude',
-      path: 'navigation.attitude',
-      subscribe: true,
       SmootherClass,
       smootherOptions,
       ...buildLifecycleCallbacks(
         'attitude.smoothed',
-        () => smoothedAttitude?.handler?.path || 'navigation.attitude'
+        () => smoothedAttitude?.state.selectedPath || 'navigation.attitude.roll'
       )
     });
-    rawAttitude = smoothedAttitude.handler;
+    rawAttitude = smoothedAttitude.raw;
+    smoothedAttitude.subscribe();
 
     navigationStateHandler = new MessageHandler(app, plugin.id, 'navigationState');
     navigationStateHandler.configure('navigation.state');
@@ -1009,7 +1008,7 @@ module.exports = function (app) {
       }
     }
     // Implicit fallback: attitude not ready or missing roll — correctedBoatSpeed = raw STW, no correction
-    else if (rawAttitude.ready) {
+    else {
       setLifecycleWarning('attitude.roll', 'incomplete', 'navigation.attitude.roll');
     }
 
@@ -1273,7 +1272,7 @@ module.exports = function (app) {
       for (const s of [smoothedHeading, smoothedBoatSpeed, smoothedGroundSpeed]) {
         if (s) { s.setSmootherClass(SC); s.setSmootherOptions(so); }
       }
-      if (smoothedAttitude) { smoothedAttitude.setSmootherClass(SC); smoothedAttitude.setSmootherOptions(so); }
+      if (smoothedAttitude) smoothedAttitude.configureSmoother(SC, so);
     }
     saveOptions();
   }
